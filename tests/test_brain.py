@@ -73,6 +73,10 @@ def test_command_has_exact_flags(tmp_path, monkeypatch):
         "mcp__jarvis__read_file,mcp__jarvis__open_in_editor,"
         "mcp__jarvis__remember,mcp__jarvis__recall,"
         "mcp__jarvis__project_note,mcp__jarvis__write_journal,"
+        "mcp__jarvis__learning_status,mcp__jarvis__approve_learning,"
+        "mcp__jarvis__retire_learning,mcp__jarvis__teach,"
+        "mcp__jarvis__evaluate_code,mcp__jarvis__learn_skill,"
+        "mcp__jarvis__run_skill,mcp__jarvis__improve_now,"
         # The CLI's own two, and the only built-ins here: without them JARVIS
         # can read a page he was given the address of and find nothing.
         "WebSearch,WebFetch")

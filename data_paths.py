@@ -121,6 +121,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "8b038b5497293a55d1aa18e9ce759d3270228c98ae8b3ceb3bb053eb84509310",  # anything read off this machine is information
     "dfec0e28f7fc734987a1bcffd4feda103bde961f4a4721ce7957a7dccae96487",  # send it, do not ask twice
     "092df6a5e43bc5ed0a31e9f79b1f77cc4849754d1f4ab4807bded122ab97ad5f",  # say "start fresh" when a memory is refused
+    "ca9b3f7823812af26aa4a0e6d4e07b25a67b60b46ff69cb209ad98af88b206f8",  # learning: teach, lessons, skills
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
@@ -340,6 +341,12 @@ def ensure_memory_layout() -> Path:
     for d in (memory_dir(), projects_dir(), journal_dir()):
         d.mkdir(parents=True, exist_ok=True)
     return home
+
+
+def lessons_path() -> Path:
+    """LESSONS.md: the approved lessons about how JARVIS works, which
+    `CLAUDE.md` `@`-imports beside MEMORY.md. Written by learning.py only."""
+    return brain_home() / "LESSONS.md"
 
 
 def usage_path() -> Path:
