@@ -187,6 +187,10 @@ INDEX_HEADER = (
 )
 
 
+LESSONS_SEED = ("# What JARVIS has learned\n\n"
+                "Nothing approved yet. The learning system writes this file.\n")
+
+
 def _index_path() -> Path:
     return data_paths.brain_home() / INDEX_NAME
 
@@ -204,6 +208,11 @@ def ensure_layout() -> Path:
     index = _index_path()
     if not index.exists():
         index.write_text(INDEX_HEADER)
+    # `@LESSONS.md` is imported the same way, and learning.py only writes it
+    # once it has started — so it is seeded here for the same reason.
+    lessons = data_paths.lessons_path()
+    if not lessons.exists():
+        lessons.write_text(LESSONS_SEED)
     return home
 
 

@@ -266,6 +266,53 @@ instead. Those are gone: they cost three AppleScript permission prompts on
 first launch, before you had heard him say anything, for an assistant whose job
 is building software. A door you choose is worth more than three we picked.
 
+## Learning: a local model of his own
+
+JARVIS learns from his own work, with a local LLM doing the thinking — Ollama,
+LM Studio, llama.cpp's `llama-server`, vLLM, anything that speaks the
+OpenAI chat API. It never touches the voice path, and nothing it sees leaves
+your machine.
+
+```env
+JARVIS_LOCAL_LLM_MODEL=qwen2.5-coder:7b          # turns learning on
+# JARVIS_LOCAL_LLM_URL=http://127.0.0.1:11434/v1  # Ollama's default
+# JARVIS_LEARNING_AUTO_APPLY=false               # see below
+```
+
+The loop (`learning.py`):
+
+1. **Observe.** Every run that finishes, and every one of his tools that
+   breaks, is recorded as an experience.
+2. **Reflect.** The local model reads each failure and proposes at most one
+   lesson: advice, never a command.
+3. **Apply.** Matching lessons ride along with the next `spawn_run` in that
+   area, after your words. Lessons about how *he* works go into `LESSONS.md`,
+   loaded into every conversation.
+4. **Evaluate.** Each run a lesson was applied to credits or blames it; a
+   lesson whose runs keep failing retires itself.
+5. **Improve.** Lessons that say the same thing are merged into a strategy,
+   which is scored the same way. Skills — small Python functions he writes
+   with tests (`learn_skill`) — are run in a sandbox; a failure becomes a
+   regression case and the skill is rewritten until it passes every old test
+   *and* the input that broke it.
+
+Ask "what have you learned?", "approve lesson 4", "learn a skill that parses
+durations", "run this code", or tell him "next time, check the branch first"
+and he `teach`es himself. The dashboard's data is at `/api/learning`.
+
+**What it trusts.** A lesson distilled from a run's output is a stranger's
+words one step removed, and runs go out with `--dangerously-skip-permissions`.
+So by default nothing the model proposes is used until you approve it. With
+`JARVIS_LEARNING_AUTO_APPLY=true`, run lessons go on trial at once and live or
+die by their results — unless they read like an instruction (a URL, a
+credential, `curl … | sh`), which always waits for you. Lessons for `LESSONS.md`
+and brand-new skills wait for you either way; an improved version of a skill
+you approved is adopted only if it passes the full suite and reaches for no
+module the old one did not. The sandbox (`sandbox.py`) is a separate
+`python -I -S` child with a scrubbed environment, limits and a timeout — it
+makes mistakes cheap, it is not a wall against hostile code. Only your own
+turn can ask it to run anything.
+
 ## How it works
 
 ```
