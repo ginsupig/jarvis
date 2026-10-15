@@ -95,7 +95,10 @@ from run_executor import RunExecutor
 import data_paths
 import dialog
 import jarvis_memory
+import learning
+import learning_store
 import notifier
+import sandbox
 import tts
 from brain import Brain, BrainConfig, MAX_BOOT_PROJECTS
 from speech import Priority, SpeechScheduler
@@ -1751,6 +1754,13 @@ run_executor_instance = RunExecutor(run_store, max_concurrent=3)
 # test (or a partial boot) might skip. `subscribe` de-duplicates, and
 # `_on_run_event` ignores everything that is not a voice-origin completion.
 run_executor_instance.subscribe(_on_run_event)
+# Learns from every run that finishes (any origin: a dashboard run's failure
+# teaches as much as a voice run's). Subscribed in lifespan, not here — its
+# worker needs a running loop, and a test that skips lifespan should see no
+# learning at all rather than a queue nothing drains.
+learning_engine = learning.LearningEngine(
+    outcome_of=lambda run: _learning_outcome(run),
+    prompt_of=lambda text: user_prompt_of(text))
 cached_projects: list[dict] = []
 
 # Usage tracking — logs every call with timestamp, persists to disk
@@ -1849,6 +1859,14 @@ async def lifespan(application: FastAPI):
     except Exception:
         log.warning("dispatch migration skipped", exc_info=True)
     run_store.sweep_stale_runs()
+    try:
+        await learning_engine.start()
+        subscribe = getattr(run_executor_instance, "subscribe", None)
+        if subscribe is not None:      # a test's stand-in executor may have none
+            subscribe(learning_engine.on_run_message)
+    except Exception:
+        # Learning is an addition; it must never be the reason JARVIS is mute.
+        log.warning("learning engine did not start", exc_info=True)
 
     await start_brain_and_speech()
     await start_session_watcher()
@@ -1864,6 +1882,10 @@ async def lifespan(application: FastAPI):
 
     await stop_session_watcher()
     await stop_brain_and_speech()
+    unsubscribe = getattr(run_executor_instance, "unsubscribe", None)
+    if unsubscribe is not None:
+        unsubscribe(learning_engine.on_run_message)
+    await learning_engine.stop()
 
 
 # The interactive OpenAPI console is a "Try it out" button on every route
@@ -2662,6 +2684,8 @@ async def internal_tool(request: Request):
             result = await result
     except Exception as e:
         log.error(f"tool {tool} failed: {e}", exc_info=True)
+        # One of JARVIS's own tools broke: material for a brain lesson.
+        learning_engine.observe_tool_failure(tool, f"{type(e).__name__}: {e}")
         return _tool_reply(False, f"That tool failed: {e}")
     # The turn now holds whatever that tool brought back. Marked HERE, once,
     # rather than in each handler: a reader added later cannot forget, and
@@ -4068,7 +4092,8 @@ def user_prompt_of(stored_prompt: str) -> str:
     """
     text = stored_prompt or ""
     if text.startswith(UNATTENDED_PREAMBLE):
-        return text[len(UNATTENDED_PREAMBLE):]
+        # The lessons appended after his words are JARVIS's, not his.
+        return text[len(UNATTENDED_PREAMBLE):].split(learning.RUNS_HEADER, 1)[0]
     if builds.is_build_prompt(text):
         # A build's prompt is framing to its last line — there is no "user
         # half" to strip down to. Its topic comes off the spec path instead.
@@ -4207,8 +4232,10 @@ async def tool_spawn_run(args: dict) -> str:
         resume_from = previous["id"] if previous else None
 
     # The user's own words, framed for a process nobody can answer. See
-    # UNATTENDED_PREAMBLE.
-    composed = compose_run_prompt(prompt)
+    # UNATTENDED_PREAMBLE. Then whatever earlier runs in this area taught —
+    # AFTER his words, so they stay verbatim and first.
+    lessons = await asyncio.to_thread(_lessons_for_run, prompt, name)
+    composed = compose_run_prompt(prompt) + learning.LearningEngine.format_for_run(lessons)
 
     try:
         run_id = await run_executor_instance.spawn(composed, name, path, "voice",
@@ -4217,6 +4244,10 @@ async def tool_spawn_run(args: dict) -> str:
     except Exception as e:
         log.error(f"spawn_run failed for {name}: {e}", exc_info=True)
         return f"I couldn't start that in {name}, sir."
+    if lessons:
+        # Recorded so the run's outcome can credit or blame each one.
+        await asyncio.to_thread(learning_store.record_application, run_id,
+                                [lesson["id"] for lesson in lessons])
 
     # "cancel that" and "how's it going" have to work: nobody can say a UUID
     # out loud, so the run JARVIS just started is remembered as the referent
@@ -4419,6 +4450,30 @@ def _run_gist(run: dict, words: int = 7) -> str:
 # answer we would reach — so the cap costs nothing and bounds the read.
 _OUTCOME_EVENT_CAP = 800
 _OUTCOME_PAGE = 200
+
+
+def _lessons_for_run(prompt: str, project: str) -> list[dict]:
+    """Never the reason a run does not start."""
+    try:
+        learning_store.init_db()
+        return learning_engine.lessons_for_run(prompt, project)
+    except Exception:
+        log.warning("could not choose lessons for a run", exc_info=True)
+        return []
+
+
+def _learning_outcome(run: dict) -> bool | None:
+    """Did the work a lesson rode along with succeed? A run that exited zero
+    by asking a question it could not have answered did not; one that changed
+    nothing may simply have been a question, so it says nothing either way."""
+    verdict = learning.default_outcome(run)
+    if verdict is True:
+        outcome = _run_outcome(run)
+        if outcome == stream_parser.STALLED:
+            return False
+        if outcome != stream_parser.OK:
+            return None
+    return verdict
 
 
 def _run_outcome(run: dict) -> str:
@@ -6393,6 +6448,227 @@ TOOL_HANDLERS.update({
 # These three WRITE. A watcher-origin turn must never reach them, or text from
 # somebody else's transcript could plant a "fact" JARVIS then repeats as his own.
 ACTING_TOOLS.update({"remember", "project_note", "write_journal"})
+
+
+# ---------------------------------------------------------------------------
+# Learning: lessons from failures, scored by outcome; skills, written and
+# repaired under test. The engine and its trust rules are in learning.py.
+# ---------------------------------------------------------------------------
+
+_LEARNING_WRAP_NAME = "learned"
+
+
+def _learning_ready() -> None:
+    """CREATE IF NOT EXISTS, on every call: a handler can be reached before
+    (or without) the lifespan that starts the engine, and JARVIS_DATA_DIR
+    may have moved under it."""
+    learning_store.init_db()
+
+
+async def tool_learning_status(args: dict) -> str:
+    """What JARVIS has learned, what waits on the user, and whether the
+    local model is up. Lesson text was distilled from run output, so it is
+    wrapped and the tool taints, like any other reader of foreign words."""
+    await asyncio.to_thread(_learning_ready)
+    status = await asyncio.to_thread(learning_engine.status)
+    llm = status["local_llm"]
+    head = [
+        (f"Local model {_plain_name(llm['model'], 'configured')} is set up"
+         if llm["enabled"] else "No local model is configured, so I record but cannot reflect"),
+        f"auto-apply is {'on' if status['auto_apply'] else 'off'}",
+        f"{status['lessons'][learning_store.ACTIVE]} lessons in use, "
+        f"{status['lessons'][learning_store.CANDIDATE]} waiting, "
+        f"{status['lessons'][learning_store.RETIRED]} retired",
+        f"{status['experiences'].get('unreflected_failures', 0)} failures not yet reflected on",
+    ]
+    lines = []
+    for lesson in status["pending"][:6]:
+        # The body, not just the title: the body is what approval puts in
+        # front of a run (or into every conversation), so it is what he has
+        # to hear before saying yes.
+        flag = " (reads like an instruction)" if lesson["risky"] else ""
+        lines.append(f"waiting — lesson {lesson['id']} [{lesson['scope']}]{flag}: "
+                     f"{lesson['title']} — {lesson['body']}")
+    for lesson in status["active"][:6]:
+        if lesson["scope"] == "brain":
+            versus = "loaded into every conversation"
+        elif lesson["lift"] is None:
+            versus = "no comparison runs yet"
+        else:
+            versus = (f"{abs(round(lesson['lift'] * 100))} points "
+                      f"{'better' if lesson['lift'] >= 0 else 'worse'} than runs without it")
+        uses = "" if lesson["scope"] == "brain" else f"{lesson['uses']} uses, "
+        lines.append(f"in use — lesson {lesson['id']} [{lesson['scope']}], "
+                     f"{uses}{versus}: {lesson['title']}")
+    for skill in status["skills"][:6]:
+        state = (f"v{skill['active_version']} in use" if skill["active_version"]
+                 else "waiting for approval")
+        lines.append(f"skill {skill['name']} — {state}; latest v{skill['version']} "
+                     f"passes {skill['passed']}/{skill['total']} tests; {skill['note']}")
+    lines += [f"recently — {a}" for a in status["activity"][:4]]
+    if status["busy"]:
+        lines.append("working on — " + ", ".join(status["busy"]))
+    text = "; ".join(head) + "."
+    if lines:
+        text += "\n" + _wrap_untrusted(_LEARNING_WRAP_NAME, "\n".join(lines))
+    return text
+
+
+def _ref_arg(args: dict) -> str:
+    return str(args.get("ref") or args.get("id") or args.get("name") or "").strip()
+
+
+async def tool_approve_learning(args: dict) -> str:
+    await asyncio.to_thread(_learning_ready)
+    return await asyncio.to_thread(learning_engine.approve, _ref_arg(args))
+
+
+async def tool_retire_learning(args: dict) -> str:
+    await asyncio.to_thread(_learning_ready)
+    return await asyncio.to_thread(learning_engine.retire, _ref_arg(args))
+
+
+async def tool_teach(args: dict) -> str:
+    """The user's own lesson, in use at once. A memory writer: it lands in
+    LESSONS.md (or in every matching run's prompt), so it is gated on the
+    generation exactly as `remember` is."""
+    text = str(args.get("lesson") or "").strip()
+    if not text:
+        return "There was nothing to learn."
+    scope = str(args.get("scope") or "brain").strip().lower()
+    await asyncio.to_thread(_learning_ready)
+    lesson_id = await asyncio.to_thread(learning_engine.teach, text, scope,
+                                        str(args.get("applies_to") or ""))
+    return f"Learned, as lesson {lesson_id}."
+
+
+async def tool_evaluate_code(args: dict) -> str:
+    code = str(args.get("code") or "")
+    if not code.strip():
+        return "There was no code to run."
+    try:
+        timeout = float(args.get("timeout") or sandbox.DEFAULT_TIMEOUT_SEC)
+    except (TypeError, ValueError):
+        timeout = sandbox.DEFAULT_TIMEOUT_SEC
+    await asyncio.to_thread(_learning_ready)
+    result = await learning_engine.evaluate_code(code, timeout=timeout)
+    verdict = ("It timed out" if result.timed_out else
+               "It ran cleanly" if result.ok else f"It failed, exit {result.returncode}")
+    out = "\n".join(part for part in (
+        result.stdout.strip() and f"output:\n{result.stdout.strip()[-700:]}",
+        result.stderr.strip() and f"errors:\n{result.stderr.strip()[-500:]}") if part)
+    text = f"{verdict}, in {result.duration:.1f} seconds."
+    return text + ("\n" + _wrap_untrusted("code output", out) if out else "")
+
+
+async def tool_learn_skill(args: dict) -> str:
+    name = str(args.get("name") or "").strip().lower().replace(" ", "_")
+    description = str(args.get("description") or "").strip()
+    if not description:
+        return "Tell me what the skill should do."
+    if not learning.SKILL_NAME_RE.fullmatch(name):
+        return "A skill needs a short name: lowercase letters, digits and underscores."
+    if not learning_engine.llm.enabled:
+        return "I need a local model to write skills; none is configured."
+    await asyncio.to_thread(_learning_ready)
+    started = learning_engine.background(
+        learning.job_key("learn", name), learning_engine.learn_skill(name, description))
+    said = _plain_name(name, "that skill")
+    return (f"Working on {said}; I'll test it until it passes. Ask me how I'm getting on."
+            if started else f"I'm already working on {said}.")
+
+
+async def tool_run_skill(args: dict) -> str:
+    name = str(args.get("name") or "").strip().lower().replace(" ", "_")
+    kwargs = args.get("arguments") or {}
+    if isinstance(kwargs, str):
+        try:
+            kwargs = json.loads(kwargs or "{}")
+        except ValueError:
+            return "The arguments have to be a JSON object."
+    if not isinstance(kwargs, dict):
+        return "The arguments have to be a JSON object."
+    await asyncio.to_thread(_learning_ready)
+    result = await learning_engine.run_skill(name, kwargs)
+    if result is None:
+        return f"I have no approved skill called {_plain_name(name, 'that')}."
+    if result.bad_arguments:
+        return f"Those arguments don't fit that skill: {_cap_tool_result(result.error)[:300]}."
+    if not result.ok:
+        repair = " I'll try to repair it." if learning_engine.llm.enabled else ""
+        return f"It failed: {_cap_tool_result(result.error)[:300]}.{repair}"
+    shown = json.dumps(result.value, ensure_ascii=False)[:900]
+    return "Result:\n" + _wrap_untrusted("skill output", shown)
+
+
+async def tool_improve_now(args: dict) -> str:
+    if not learning_engine.llm.enabled:
+        return "I need a local model to reflect; none is configured."
+    await asyncio.to_thread(_learning_ready)
+    skill = str(args.get("skill") or "").strip().lower().replace(" ", "_")
+    if skill:
+        if not learning.SKILL_NAME_RE.fullmatch(skill):
+            return "A skill's name is lowercase letters, digits and underscores."
+        started = learning_engine.background(learning.job_key("improve", skill),
+                                             learning_engine.improve_skill(skill))
+        said = _plain_name(skill, "that skill")
+        return (f"Reworking {said} against everything it has failed on."
+                if started else f"I'm already working on {said}.")
+    started = learning_engine.background("reflect", learning_engine.improve_now())
+    return ("Reflecting on what has gone wrong and tidying what I've learned."
+            if started else "I'm already reflecting.")
+
+
+TOOL_HANDLERS.update({
+    "learning_status": tool_learning_status,
+    "approve_learning": tool_approve_learning,
+    "retire_learning": tool_retire_learning,
+    "teach": tool_teach,
+    "evaluate_code": tool_evaluate_code,
+    "learn_skill": tool_learn_skill,
+    "run_skill": tool_run_skill,
+    "improve_now": tool_improve_now,
+})
+# Every one of these but the reader changes what JARVIS (or a run) will do
+# next, or executes code. Only the user, on a turn that read nothing foreign.
+ACTING_TOOLS.update({"approve_learning", "retire_learning", "teach", "evaluate_code",
+                     "learn_skill", "run_skill", "improve_now"})
+# `teach` outlives the generation the same way `remember` does.
+MEMORY_WRITERS.add("teach")
+TAINTING_TOOLS.update({
+    "learning_status": "something I learned from a run",
+    "evaluate_code": "the output of code I ran",
+    "run_skill": "the output of code I ran",
+})
+TAINT_EXEMPT_TOOLS.update({
+    "approve_learning": "it changes a lesson's or a skill's status, it does not read",
+    "retire_learning": "it changes a lesson's or a skill's status, it does not read",
+    "teach": "it writes a lesson the user dictated, it does not read",
+    "learn_skill": "it starts background work and says only that it has",
+    "improve_now": "it starts background work and says only that it has",
+})
+
+
+@app.get("/api/learning")
+async def api_learning():
+    await asyncio.to_thread(_learning_ready)
+    return await asyncio.to_thread(learning_engine.status)
+
+
+class LearningRef(BaseModel):
+    ref: str
+
+
+@app.post("/api/learning/approve")
+async def api_learning_approve(body: LearningRef):
+    await asyncio.to_thread(_learning_ready)
+    return {"said": await asyncio.to_thread(learning_engine.approve, body.ref)}
+
+
+@app.post("/api/learning/retire")
+async def api_learning_retire(body: LearningRef):
+    await asyncio.to_thread(_learning_ready)
+    return {"said": await asyncio.to_thread(learning_engine.retire, body.ref)}
 
 
 @app.websocket("/ws/sessions")
