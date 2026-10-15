@@ -53,7 +53,8 @@ this presents as "the UI is up but nothing works" rather than as an error.
   token from `data_paths.ensure_tool_token()`.
 - **Learning** (`learning.py`): a local LLM (any OpenAI-compatible server,
   `local_llm.py`) turns failed runs and broken tools into lessons, scores each
-  lesson by the outcomes of the runs it rode along with, merges lessons into
+  lesson by the outcomes of the runs it rode along with against runs in the
+  same projects without it (`learning_store.baseline`), merges lessons into
   strategies, and writes and repairs Python skills under sandboxed tests
   (`sandbox.py`). State is `learning_store.py` (SQLite, in jarvis.db).
   The local model only ever proposes: nothing it writes is used until the
@@ -144,11 +145,13 @@ arbitrary LLM and file content, so everything goes through
 - `local_llm.py` — The learning system's model: OpenAI-compatible chat over
   httpx (Ollama, LM Studio, llama.cpp, vLLM). Off unless
   `JARVIS_LOCAL_LLM_MODEL` is set
-- `sandbox.py` — Runs evaluated code and learned skills in a `python -I -S`
-  child: scrubbed env, timeout, rlimits. Makes mistakes cheap; it is NOT a
+- `sandbox.py` — Runs evaluated code and learned skills in a
+  `python -I -S -X utf8` child: scrubbed env, timeout, rlimits on POSIX and a
+  one-process Job Object on Windows. Makes mistakes cheap; it is NOT a
   wall against hostile code — the gates upstream are
 - `learning_store.py` — SQLite `learning_*` tables: experiences, lessons
-  (candidate / active / retired, with uses and outcomes), versioned skills,
+  (candidate / active / retired, with uses, outcomes and the baseline they
+  are judged against), versioned skills,
   and the failing inputs each skill must survive
 - `learning.py` — The engine: observe, reflect, apply, evaluate, consolidate,
   write and improve skills. Writes `LESSONS.md` (active brain lessons only)

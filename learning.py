@@ -6,8 +6,10 @@
               LESSON from it — advice, never a command
     apply     relevant lessons ride along with the next Claude Code run in
               that area; brain lessons go into LESSONS.md for JARVIS himself
-    evaluate  each run a lesson was applied to credits or blames it, so a
-              lesson's own track record decides whether it is kept
+    evaluate  each run a lesson was applied to credits or blames it, and that
+              record is compared with the runs in the same projects that did
+              not carry it: a lesson is kept or retired on the difference it
+              makes, not on how easy its projects happen to be
     improve   lessons that say the same thing are merged into one strategy,
               which is itself scored the same way (lessons about lessons);
               a SKILL that fails is rewritten, and the rewrite is only
@@ -36,9 +38,11 @@ auto-apply or not. Only what the user says himself (`teach`) skips the wait.
 
 SKILLS are code. A new skill always waits for approval. With auto-apply on,
 an improvement to an approved skill is adopted on the spot when it passes the
-old version's tests and every recorded failing input, and reaches for no
-module the approved version did not already use (`capabilities`). Anything
-else waits.
+old version's tests, returns a value for every recorded failing input (a
+rewrite that just rejects them with ValueError waits), and reaches for nothing
+the approved version did not already use (`capabilities`). Anything else
+waits. A call whose arguments do not fit `run()` is the caller's mistake and
+is never recorded as a failing input.
 
 The local model is only ever a proposer. Every decision above is made here,
 in code, from counts and test results.
@@ -46,6 +50,7 @@ in code, from counts and test results.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import logging
@@ -65,8 +70,12 @@ from local_llm import LocalLLM, LocalLLMError
 log = logging.getLogger("jarvis.learning")
 
 LESSONS_PER_RUN = 3
-PROMOTE_MIN_USES, PROMOTE_SCORE = 3, 0.6
-RETIRE_MIN_USES, RETIRE_SCORE = 4, 0.35
+# A lesson is judged by its LIFT: its own posterior success rate minus that of
+# comparable runs without it (learning_store.baseline). No baseline, or too
+# small a one, and nothing is decided — absence of evidence is not evidence.
+PROMOTE_MIN_USES, PROMOTE_LIFT = 5, 0.10
+RETIRE_MIN_USES, RETIRE_LIFT = 6, -0.15
+BASELINE_MIN_RUNS = 5
 CONSOLIDATE_EVERY = 6           # new lessons between merge passes
 BRAIN_LESSONS_MAX = 20          # lines of LESSONS.md, which every turn loads
 SKILL_ATTEMPTS = 3
@@ -109,6 +118,33 @@ def reliability(lesson: dict) -> float:
         lesson.get("successes", 0) + lesson.get("failures", 0) + 2)
 
 
+def lift(lesson: dict, baseline: tuple[int, int]) -> float | None:
+    """How much better the work went with the lesson than without it, as a
+    difference of Beta(1,1) posterior means. None when the comparison runs
+    are too few to say."""
+    successes, failures = baseline
+    if successes + failures < BASELINE_MIN_RUNS:
+        return None
+    return reliability(lesson) - (successes + 1) / (successes + failures + 2)
+
+
+def lineage(lesson: dict) -> list[int]:
+    """The lesson and everything it was merged from, all the way down."""
+    seen, todo = [], [lesson["id"]]
+    while todo:
+        lesson_id = todo.pop()
+        if lesson_id in seen:
+            continue
+        seen.append(lesson_id)
+        row = lesson if lesson_id == lesson["id"] else store.get_lesson(lesson_id)
+        todo += (row or {}).get("parents") or []
+    return seen
+
+
+def lesson_lift(lesson: dict) -> float | None:
+    return lift(lesson, store.baseline(lineage(lesson)))
+
+
 def similarity(a: str, b: str) -> float:
     ta, tb = tokens(a), tokens(b)
     if not ta or not tb:
@@ -132,28 +168,56 @@ def looks_risky(text: str) -> bool:
     return bool(_RISKY_RE.search(text or ""))
 
 
-# Modules whose use means a skill can reach outside its own arguments. A new
-# one appearing in a rewrite is a change in WHAT the skill can do, not in how
-# well it does it, so it is never adopted without the user.
-_CAPABILITY_MODULES = ("os", "sys", "subprocess", "socket", "shutil", "pathlib",
-                       "urllib", "http", "ftplib", "smtplib", "ctypes",
-                       "multiprocessing", "threading", "asyncio", "importlib",
-                       "pickle", "marshal", "tempfile", "glob", "io", "builtins")
-_IMPORT_RE = re.compile(r"^\s*(?:from\s+([a-zA-Z_][\w.]*)\s+import|import\s+([^\n#]+))",
-                        re.MULTILINE)
+# What a skill can reach beyond its own arguments. A new capability appearing
+# in a rewrite is a change in WHAT the skill can do, not in how well it does
+# it, so it is never adopted without the user.
+#
+# Read off the syntax tree, and inverted: every import is a capability except
+# the modules below, which compute on values and touch nothing else. A regex
+# over import lines missed `f = open`, `getattr(__builtins__, ...)` and any
+# module nobody thought to list. Still not a wall (see sandbox.py) — a check
+# that the code says what it does, for code the user has already approved.
+_PURE_MODULES = frozenset("""
+abc base64 bisect calendar cmath collections colorsys copy csv dataclasses
+datetime decimal difflib enum fractions functools hashlib heapq hmac html
+itertools json keyword math numbers operator random re statistics string
+textwrap time typing unicodedata uuid zlib __future__
+""".split())
+# Builtins that read or write outside the skill, or reach names it did not.
+_REACHING_NAMES = frozenset({
+    "open", "eval", "exec", "compile", "__import__", "getattr", "setattr",
+    "delattr", "globals", "locals", "vars", "breakpoint", "input",
+    "__builtins__", "__loader__", "__spec__"})
+# Dunders that are ordinary Python, not introspection.
+_PLAIN_DUNDERS = frozenset({
+    "__name__", "__doc__", "__init__", "__post_init__", "__repr__", "__str__",
+    "__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__", "__hash__",
+    "__len__", "__iter__", "__next__", "__contains__", "__getitem__",
+    "__enter__", "__exit__", "__slots__", "__all__"})
 
 
 def capabilities(code: str) -> set[str]:
+    try:
+        tree = ast.parse(code or "")
+    except SyntaxError:
+        return {"unparseable code"}
     found: set[str] = set()
-    for frm, imp in _IMPORT_RE.findall(code or ""):
-        names = [frm] if frm else [p.strip().split(" ")[0] for p in imp.split(",")]
-        for name in names:
-            root = name.split(".")[0]
-            if root in _CAPABILITY_MODULES:
-                found.add(root)
-    for call in ("open(", "__import__", "eval(", "exec(", "compile("):
-        if call in (code or ""):
-            found.add(call.rstrip("("))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            roots = [alias.name.split(".")[0] for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            roots = [(node.module or "").split(".")[0] if not node.level
+                     else "relative import"]
+        elif isinstance(node, ast.Name) and node.id in _REACHING_NAMES:
+            found.add(node.id)
+            continue
+        elif (isinstance(node, ast.Attribute) and node.attr.startswith("__")
+              and node.attr.endswith("__") and node.attr not in _PLAIN_DUNDERS):
+            found.add(node.attr)
+            continue
+        else:
+            continue
+        found.update(root for root in roots if root not in _PURE_MODULES)
     return found
 
 
@@ -324,20 +388,24 @@ class LearningEngine:
     # -- evaluate -----------------------------------------------------------
 
     def reevaluate(self, lesson_ids: list[int]) -> list[str]:
-        """Promote or retire on the lesson's own record. Returns what changed."""
+        """Promote or retire on the difference the lesson made, against runs
+        in the same projects without it. Returns what changed."""
         changes = []
         for lesson_id in lesson_ids:
             lesson = store.get_lesson(lesson_id)
             if lesson is None or lesson["status"] == store.RETIRED:
                 continue
-            score, uses = reliability(lesson), lesson["uses"]
-            if uses >= RETIRE_MIN_USES and score < RETIRE_SCORE:
-                store.set_lesson_status(lesson_id, store.RETIRED,
-                                        f"retired: the work it was applied to failed "
-                                        f"{lesson['failures']} of {uses} times")
+            uses, gain = lesson["uses"], lesson_lift(lesson)
+            if gain is None:
+                continue
+            if uses >= RETIRE_MIN_USES and gain <= RETIRE_LIFT:
+                store.set_lesson_status(
+                    lesson_id, store.RETIRED,
+                    f"retired: its runs did {abs(gain):.0%} worse than the same "
+                    f"projects' runs without it ({lesson['failures']} of {uses} failed)")
                 changes.append(f"retired lesson {lesson_id}, it was not helping")
             elif (lesson["status"] == store.CANDIDATE and self._may_trial(lesson)
-                  and uses >= PROMOTE_MIN_USES and score >= PROMOTE_SCORE):
+                  and uses >= PROMOTE_MIN_USES and gain >= PROMOTE_LIFT):
                 self._activate(lesson)
                 changes.append(f"promoted lesson {lesson_id} on its results")
         for change in changes:
@@ -433,16 +501,19 @@ class LearningEngine:
         ])
         async with self._llm_lock:
             answer = await self.llm.chat_json(REFLECT_SYSTEM, user)
-        lesson_id = None
+        lesson_id, created = None, None
         same = answer.get("same_as")
-        if isinstance(same, int) and any(l["id"] == same for l in existing):
+        if (isinstance(same, int) and not isinstance(same, bool)
+                and any(l["id"] == same for l in existing)):
             await asyncio.to_thread(store.add_evidence, same)
             lesson_id = same
         elif isinstance(answer.get("lesson"), dict):
-            lesson_id = await asyncio.to_thread(
+            # Also reached when `same_as` names a lesson that does not exist:
+            # the model's proposal is still judged on its own.
+            lesson_id = created = await asyncio.to_thread(
                 self._store_reflected, scope, answer["lesson"], existing)
         await asyncio.to_thread(store.mark_reflected, experience["id"], lesson_id)
-        return lesson_id if not isinstance(same, int) else None
+        return created
 
     def _store_reflected(self, scope: str, proposal: dict, existing: list[dict]) -> int | None:
         title = _clip(proposal.get("title"), TITLE_MAX)
@@ -466,6 +537,11 @@ class LearningEngine:
         self._new_since_consolidation = 0
         pool = await asyncio.to_thread(store.list_lessons,
                                        [store.ACTIVE, store.CANDIDATE], None, 80)
+        # A lesson already merged into a strategy is that strategy's to
+        # represent. Offered again, it would be merged again — beside the
+        # strategy that already holds it — and its record counted twice.
+        merged = await asyncio.to_thread(store.merged_parent_ids)
+        pool = [l for l in pool if l["id"] not in merged]
         if len(pool) < 2:
             return 0
         by_id = {l["id"]: l for l in pool}
@@ -475,17 +551,21 @@ class LearningEngine:
             f"{_clip(l['body'], BODY_MAX)}" for l in pool)
         async with self._llm_lock:
             answer = await self.llm.chat_json(CONSOLIDATE_SYSTEM, _fence("lessons", listing))
-        merged = 0
+        made, claimed = 0, set()
         for merge in answer.get("merges") or []:
             if not isinstance(merge, dict):
                 continue
-            ids = [i for i in dict.fromkeys(merge.get("ids") or []) if i in by_id]
+            ids = [i for i in dict.fromkeys(merge.get("ids") or [])
+                   if isinstance(i, int) and i in by_id]
             parents = [by_id[i] for i in ids]
-            if len(parents) < 2 or len({p["scope"] for p in parents}) != 1:
+            if (len(parents) < 2 or len({p["scope"] for p in parents}) != 1
+                    or claimed & set(ids)):     # one lesson, one strategy
                 continue
             new_id = await asyncio.to_thread(self._store_merge, parents, merge)
-            merged += new_id is not None
-        return merged
+            if new_id is not None:
+                claimed.update(ids)
+                made += 1
+        return made
 
     def _store_merge(self, parents: list[dict], merge: dict) -> int | None:
         title, body = _clip(merge.get("title"), TITLE_MAX), _clip(merge.get("body"), BODY_MAX)
@@ -535,20 +615,27 @@ class LearningEngine:
             self.export_brain_lessons()
             return f"Lesson {key} approved."
         if kind == "pending":
-            # A bulk yes covers lessons he may never have heard read out, so
-            # the ones that read like an instruction are left for one-by-one.
-            count, held = 0, []
+            # A bulk yes covers lessons he may never have heard read out. So
+            # it never reaches LESSONS.md, which is trusted text in every
+            # conversation, and it skips anything that reads like an
+            # instruction: both are left for one-by-one.
+            count, held, brain = 0, [], []
             for lesson in store.list_lessons(status=store.CANDIDATE):
+                if lesson["scope"] == "brain":
+                    brain.append(str(lesson["id"]))
+                    continue
                 if looks_risky(f"{lesson['title']} {lesson['body']}"):
                     held.append(str(lesson["id"]))
                     continue
                 self._activate(lesson, "approved by the user")
                 count += 1
-            self.export_brain_lessons()
             said = f"Approved {count} lesson{'s' if count != 1 else ''}."
             if held:
                 said += (f" I held back {', '.join(held)}; they read like instructions, "
                          f"so approve those by number if you mean it.")
+            if brain:
+                said += (f" Lessons about how I work ({', '.join(brain)}) go into every "
+                         f"conversation, so those are one at a time, by number.")
             return said
         if kind == "skill":
             latest = store.latest_skill(key)
@@ -616,18 +703,36 @@ class LearningEngine:
         user = "\n\n".join([
             f"SKILL NAME: {name}", f"WHAT IT MUST DO:\n{_fence('task', base['description'])}",
             f"CURRENT CODE:\n{_fence('code', base['code'])}",
-            "INPUTS IT FAILED ON (each must now return, or raise ValueError):\n"
+            "INPUTS IT FAILED ON (each must now return a value, or raise ValueError "
+            "only if the input is genuinely invalid for what the skill does):\n"
             + _fence("failures", failures or "(none recorded)"),
-            "Keep every existing test passing; you may add tests."])
+            "Keep every existing test passing. For each input above that has a "
+            "correct answer, add a test asserting what run() returns for it."])
         best = await self._write_until_green(user, base["tests"] + regression)
         if best is None:
             self._note(f"could not improve skill {name}")
             return {"ok": False, "said": f"I couldn't improve {name} without breaking it."}
         code, tests, report = best
+        # The regression cases above pass on ValueError too, so `raise
+        # ValueError` would "fix" every one of them. Whether the rewrite
+        # actually handles the inputs is asked separately, and a rewrite that
+        # merely rejects some of them is the user's call, never auto-adopted.
+        rejected = 0
+        if cases:
+            handled = await asyncio.to_thread(sandbox.run_tests, code, [
+                {"name": f"case_{c['id']}_returns", "code": f"run(**{c['kwargs']!r})"}
+                for c in cases])
+            rejected = handled.total - handled.passed
         new_caps = capabilities(code) - capabilities(base["code"])
-        adopt = (self.auto_apply and base["status"] == store.ACTIVE and not new_caps)
-        note = (f"reaches for {', '.join(sorted(new_caps))}, which v{base['version']} did not"
-                if new_caps else f"fixes {len(cases)} recorded failure(s)")
+        adopt = (self.auto_apply and base["status"] == store.ACTIVE and not new_caps
+                 and not rejected)
+        if new_caps:
+            note = f"reaches for {', '.join(sorted(new_caps))}, which v{base['version']} did not"
+        elif rejected:
+            note = (f"rejects {rejected} of the {len(cases)} input(s) it failed on as "
+                    f"invalid, rather than handling them")
+        else:
+            note = f"handles all {len(cases)} recorded failure(s)"
         row = await asyncio.to_thread(store.add_skill, name, base["description"], code,
                                       tests, store.CANDIDATE, report.passed,
                                       report.total, note)
@@ -672,6 +777,10 @@ class LearningEngine:
         if skill is None:
             return None
         result = await asyncio.to_thread(sandbox.call_skill, skill["code"], kwargs)
+        if result.bad_arguments:
+            # The call did not fit run()'s signature. Nothing for the skill to
+            # learn: "repairing" it against a typo would teach it to accept one.
+            return result
         await asyncio.to_thread(store.count_call, skill["id"], result.ok)
         if not result.ok:
             await asyncio.to_thread(store.add_skill_case, name, kwargs, result.error)
@@ -734,10 +843,12 @@ class LearningEngine:
 
 
 def _lesson_summary(lesson: dict) -> dict:
+    gain = lesson_lift(lesson) if lesson["uses"] else None
     return {"id": lesson["id"], "scope": lesson["scope"], "title": lesson["title"],
             "body": lesson["body"], "source": lesson["source"],
             "status": lesson["status"], "uses": lesson["uses"],
             "reliability": round(reliability(lesson), 2), "evidence": lesson["evidence"],
+            "lift": None if gain is None else round(gain, 2),
             "risky": looks_risky(f"{lesson['title']} {lesson['body']}"),
             "parents": lesson["parents"]}
 

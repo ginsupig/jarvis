@@ -6483,13 +6483,23 @@ async def tool_learning_status(args: dict) -> str:
     ]
     lines = []
     for lesson in status["pending"][:6]:
+        # The body, not just the title: the body is what approval puts in
+        # front of a run (or into every conversation), so it is what he has
+        # to hear before saying yes.
         flag = " (reads like an instruction)" if lesson["risky"] else ""
         lines.append(f"waiting — lesson {lesson['id']} [{lesson['scope']}]{flag}: "
-                     f"{lesson['title']}")
+                     f"{lesson['title']} — {lesson['body']}")
     for lesson in status["active"][:6]:
+        if lesson["scope"] == "brain":
+            versus = "loaded into every conversation"
+        elif lesson["lift"] is None:
+            versus = "no comparison runs yet"
+        else:
+            versus = (f"{abs(round(lesson['lift'] * 100))} points "
+                      f"{'better' if lesson['lift'] >= 0 else 'worse'} than runs without it")
+        uses = "" if lesson["scope"] == "brain" else f"{lesson['uses']} uses, "
         lines.append(f"in use — lesson {lesson['id']} [{lesson['scope']}], "
-                     f"{int(lesson['reliability'] * 100)}% reliable over "
-                     f"{lesson['uses']} uses: {lesson['title']}")
+                     f"{uses}{versus}: {lesson['title']}")
     for skill in status["skills"][:6]:
         state = (f"v{skill['active_version']} in use" if skill["active_version"]
                  else "waiting for approval")
@@ -6582,6 +6592,8 @@ async def tool_run_skill(args: dict) -> str:
     result = await learning_engine.run_skill(name, kwargs)
     if result is None:
         return f"I have no approved skill called {_plain_name(name, 'that')}."
+    if result.bad_arguments:
+        return f"Those arguments don't fit that skill: {_cap_tool_result(result.error)[:300]}."
     if not result.ok:
         repair = " I'll try to repair it." if learning_engine.llm.enabled else ""
         return f"It failed: {_cap_tool_result(result.error)[:300]}.{repair}"

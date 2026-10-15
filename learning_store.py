@@ -240,6 +240,43 @@ def record_application(run_id: str, lesson_ids: list[int]) -> None:
                          [(i,) for i in lesson_ids])
 
 
+def baseline(lesson_ids: list[int]) -> tuple[int, int]:
+    """(successes, failures) of the runs a lesson is compared against: every
+    run with a verdict, in the projects the lesson was applied in, that did
+    NOT carry it. `lesson_ids` is the lesson plus every lesson it was merged
+    from, so a strategy is never compared against its own parents' runs.
+
+    Dashboard runs never carry lessons, so they are the usual control. It is
+    still observational — nobody chose at random which runs got the advice —
+    but it measures a lesson against its own area's base rate rather than
+    against nothing."""
+    if not lesson_ids:
+        return 0, 0
+    marks = ",".join("?" * len(lesson_ids))
+    with closing(_connect()) as conn:
+        rows = conn.execute(
+            f"""SELECT outcome, COUNT(*) FROM learning_experiences
+                WHERE kind = 'run' AND outcome IN ('success', 'failure')
+                  AND subject IN (
+                      SELECT e.subject FROM learning_experiences e
+                      JOIN learning_applications a ON a.run_id = e.ref
+                      WHERE e.kind = 'run' AND a.lesson_id IN ({marks}))
+                  AND ref NOT IN (
+                      SELECT run_id FROM learning_applications
+                      WHERE lesson_id IN ({marks}))
+                GROUP BY outcome""", [*lesson_ids, *lesson_ids]).fetchall()
+    counts = {r[0]: r[1] for r in rows}
+    return counts.get("success", 0), counts.get("failure", 0)
+
+
+def merged_parent_ids() -> set[int]:
+    """Every lesson that some strategy (in any status) was merged from."""
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT parents FROM learning_lessons "
+                            "WHERE parents != '[]'").fetchall()
+    return {int(i) for r in rows for i in json.loads(r[0] or "[]")}
+
+
 def settle_run(run_id: str, success: bool | None) -> list[int]:
     """Credit (or blame) every lesson applied to this run, once.
 

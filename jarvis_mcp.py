@@ -711,7 +711,9 @@ TOOL_SPECS = [
         "description": (
             "Put a learned lesson or skill into use, once the user has said so. "
             "`ref` is 'lesson 12', a skill's name, or 'all pending'. Only when he "
-            "has heard what he is approving — read it to him first."),
+            "has heard what he is approving — read him the whole lesson, not just "
+            "its title. 'all pending' never covers brain lessons or ones that read "
+            "like instructions; those are approved by number."),
         "inputSchema": {
             "type": "object",
             "properties": {"ref": {"type": "string",

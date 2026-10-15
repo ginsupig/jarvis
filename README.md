@@ -358,13 +358,17 @@ The loop (`learning.py`):
 3. **Apply.** Matching lessons ride along with the next `spawn_run` in that
    area, after your words. Lessons about how *he* works go into `LESSONS.md`,
    loaded into every conversation.
-4. **Evaluate.** Each run a lesson was applied to credits or blames it; a
-   lesson whose runs keep failing retires itself.
+4. **Evaluate.** Each run a lesson was applied to credits or blames it, and
+   its record is compared with runs in the same projects that went without it
+   (dashboard runs never carry lessons, so they are the usual control). A
+   lesson that does clearly worse than that baseline retires itself; one
+   without enough comparison runs is left alone.
 5. **Improve.** Lessons that say the same thing are merged into a strategy,
    which is scored the same way. Skills — small Python functions he writes
    with tests (`learn_skill`) — are run in a sandbox; a failure becomes a
    regression case and the skill is rewritten until it passes every old test
-   *and* the input that broke it.
+   *and* the input that broke it. A call with arguments that don't fit the
+   skill is your mistake, not the skill's, and is not recorded.
 
 Ask "what have you learned?", "approve lesson 4", "learn a skill that parses
 durations", "run this code", or tell him "next time, check the branch first"
@@ -374,13 +378,17 @@ and he `teach`es himself. The dashboard's data is at `/api/learning`.
 words one step removed, and runs go out with `--dangerously-skip-permissions`.
 So by default nothing the model proposes is used until you approve it. With
 `JARVIS_LEARNING_AUTO_APPLY=true`, run lessons go on trial at once and live or
-die by their results — unless they read like an instruction (a URL, a
-credential, `curl … | sh`), which always waits for you. Lessons for `LESSONS.md`
-and brand-new skills wait for you either way; an improved version of a skill
-you approved is adopted only if it passes the full suite and reaches for no
-module the old one did not. The sandbox (`sandbox.py`) is a separate
-`python -I -S` child with a scrubbed environment, limits and a timeout — it
-makes mistakes cheap, it is not a wall against hostile code. Only your own
+die by how they compare with runs without them — unless they read like an
+instruction (a URL, a credential, `curl … | sh`), which always waits for you.
+Lessons for `LESSONS.md` and brand-new skills wait for you either way, and
+"approve all" never covers a `LESSONS.md` lesson; JARVIS reads you each
+waiting lesson in full, not just its title. An improved version of a skill
+you approved is adopted only if it passes the full suite, actually handles
+the inputs it failed on (rather than rejecting them), and reaches for nothing
+the old one did not. The sandbox (`sandbox.py`) is a separate
+`python -I -S` child with a scrubbed environment, limits and a timeout — on
+Windows a Job Object that also stops it starting any other process — and it
+makes mistakes cheap; it is not a wall against hostile code. Only your own
 turn can ask it to run anything.
 
 ## How it works
