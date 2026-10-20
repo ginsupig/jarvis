@@ -55,6 +55,15 @@ if (-not (Test-Path $python)) { Show-Error "No virtualenv at $python. Run the se
 
 $env:PYTHONUTF8 = '1'
 
+# The learning system's local model, if LM Studio is installed. Only the server
+# is started: the model loads on its first request and unloads when idle
+# (LM Studio's JIT TTL), so it holds no memory while learning has nothing to do.
+# JARVIS runs fine without it; learning just waits.
+$lms = Join-Path $HOME '.lmstudio\bin\lms.exe'
+if ((Test-Path $lms) -and -not (Test-Port 1234)) {
+    try { & $lms server start --port 1234 *> (Join-Path $state 'lmstudio.log') } catch { }
+}
+
 if (-not (Test-Port 8340)) {
     $log = Join-Path $state 'server.log'
     $p = Start-Process -FilePath $python -ArgumentList 'server.py', '--host', '127.0.0.1' `
