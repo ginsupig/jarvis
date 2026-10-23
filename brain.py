@@ -74,6 +74,14 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__recall",
     "mcp__jarvis__project_note",
     "mcp__jarvis__write_journal",
+    "mcp__jarvis__learning_status",
+    "mcp__jarvis__approve_learning",
+    "mcp__jarvis__retire_learning",
+    "mcp__jarvis__teach",
+    "mcp__jarvis__evaluate_code",
+    "mcp__jarvis__learn_skill",
+    "mcp__jarvis__run_skill",
+    "mcp__jarvis__improve_now",
     # The CLI's own two, and the only non-JARVIS tools here. JARVIS could read
     # a page he was handed the address of and nothing else — "look it up" had
     # no answer at all. Both were verified inside this exact flag set
