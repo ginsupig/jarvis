@@ -14,6 +14,7 @@ import { openDetail, appendEvent, notifyRunChanged } from "./detail";
 import { summaryFor, noteEvent } from "./nowline";
 import { initSessions } from "./sessions";
 import { initMemory, refreshMemory } from "./memory";
+import { initLearning, refreshLearning } from "./learning";
 import { initProjects, refreshProjects } from "./projects";
 import { initSpecs, refreshSpecs } from "./specs";
 import { initUsage, refreshUsageView } from "./usage";
@@ -460,6 +461,7 @@ function setupTabs(): void {
     runs: document.getElementById("runs-view"),
     sessions: document.getElementById("sessions-view"),
     memory: document.getElementById("memory-view"),
+    learning: document.getElementById("learning-view"),
     projects: document.getElementById("projects-view"),
     specs: document.getElementById("specs-view"),
     usage: document.getElementById("usage-view"),
@@ -478,6 +480,9 @@ function setupTabs(): void {
       // The memory folder is edited on disk with no live socket pushing
       // changes, so re-fetch each time the tab is opened.
       if (view === "memory") refreshMemory();
+      // Learning has no socket either: lessons change when a run finishes or
+      // the local model reflects, neither of which this page hears about.
+      if (view === "learning") refreshLearning();
       // Same idea for Projects: no live socket, so a poll-on-open keeps a
       // stale "needs you" from sitting there after it's been answered.
       if (view === "projects") refreshProjects();
@@ -503,6 +508,9 @@ document.addEventListener("DOMContentLoaded", () => {
   // No live socket for this one — the folder is user-edited on disk, not
   // pushed to — so it's a one-shot fetch, not an ongoing connection.
   initMemory();
+  // Learning loads up front too, so the tab's "waiting for you" badge is
+  // right before anyone opens it; it polls on its own.
+  initLearning();
   // Projects has its own light poll (no live socket backs the join either),
   // so it loads and stays current regardless of which tab is showing.
   initProjects();

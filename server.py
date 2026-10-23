@@ -700,6 +700,14 @@ def _action_words(text: str) -> list[str]:
 
 
 async def _on_brain_state(state: str, info: dict) -> None:
+    if state == "ready":
+        # Every spawn — boot, restart, rotation — re-reads LESSONS.md, so this
+        # is the moment to record what the new generation knows.
+        try:
+            await asyncio.to_thread(learning_engine.mark_brain_loaded,
+                                    int(info.get("generation") or 0))
+        except Exception:
+            log.warning("could not snapshot the brain's lessons", exc_info=True)
     if state == "failed" and info.get("failure_reason") == "auth":
         # At ERROR level, visible in the terminal the user is already
         # looking at, regardless of whether speech itself is available.
@@ -1640,12 +1648,21 @@ async def _handle_utterance(text: str) -> None:
             line = "One moment, sir — my language systems are still starting."
         await speech.say(line, Priority.NORMAL)
         return
+    # Lessons approved since this generation started, which its LESSONS.md
+    # import predates. Never the reason a turn fails.
+    try:
+        update = await asyncio.to_thread(
+            learning_engine.brain_lessons_update,
+            getattr(brain_instance, "generation", None))
+    except Exception:
+        log.warning("could not check for new lessons", exc_info=True)
+        update = ""
     utt = speech.begin_turn()
     try:
         try:
             try:
                 hold = _OneLinePerTurn(lambda d: speech.feed(utt, d))
-                result = await brain_instance.turn(text, origin="user",
+                result = await brain_instance.turn(update + text, origin="user",
                                                    on_delta=hold.delta,
                                                    on_tool=hold.tool_started)
                 hold.finish()    # the one line this turn is allowed

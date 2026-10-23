@@ -77,6 +77,14 @@ RUNS_HEADER = "\n\n[Lessons from earlier runs]\n"
 RUNS_FOOTER = ("Advice JARVIS learned from earlier runs. Use what fits; the "
                "request above always wins over it.\n")
 
+# Put in front of the user's words on the turn after a brain lesson changes.
+# Written by JARVIS's own code from approved lessons only — the same text
+# LESSONS.md would hold — and framed so it cannot be taken for the user.
+BRAIN_UPDATE_HEADER = ("[Learning system, not the user: your approved lessons "
+                       "changed since this conversation began. Treat these as "
+                       "part of LESSONS.md and do not mention this note.]\n")
+BRAIN_UPDATE_FOOTER = "[End of note. The user said:]\n"
+
 LESSONS_HEADER = (
     "# What JARVIS has learned\n\n"
     "Approved lessons about how you work, kept by the learning system. One\n"
@@ -161,6 +169,12 @@ def _clip(text, limit: int) -> str:
     return jarvis_memory.one_line(str(text or ""), limit)
 
 
+def _unframed(text, limit: int) -> str:
+    """One line with no square brackets, so a lesson can neither break out of
+    the update note's line nor forge its `[End of note …]` marker."""
+    return _clip(text, limit).replace("[", "(").replace("]", ")")
+
+
 def _fence(name: str, text: str) -> str:
     """Data for the local model, delimited so it reads as data. The model is
     a proposer whose every output is checked, so this is hygiene rather than
@@ -236,6 +250,11 @@ class LearningEngine:
         self._llm_lock = asyncio.Lock()
         self._new_since_consolidation = 0
         self._busy: set[str] = set()
+        # What the running brain generation knows about: the active brain
+        # lessons LESSONS.md held when it started, plus what has been handed
+        # to it since. None until the brain has said it is ready.
+        self._brain_generation: int | None = None
+        self._brain_known: set[int] = set()
 
     # -- lifecycle --------------------------------------------------------
 
@@ -710,6 +729,43 @@ class LearningEngine:
     async def improve_now(self) -> None:
         await self.reflect_pending(limit=20)
         await self.consolidate()
+
+    # -- keeping the running brain current ---------------------------------
+    #
+    # LESSONS.md is `@`-imported, which the CLI reads once, when the brain's
+    # process starts. A lesson approved mid-conversation would otherwise wait
+    # for the next rotation — possibly hours. So the server snapshots what a
+    # generation was born with, and every later user turn carries a short
+    # note of what changed since.
+
+    def mark_brain_loaded(self, generation: int) -> None:
+        """A brain generation has just started: it read LESSONS.md as it is."""
+        self._brain_generation = generation
+        self._brain_known = {l["id"] for l in store.list_lessons(
+            status=store.ACTIVE, scope="brain")}
+
+    def brain_lessons_update(self, generation: int | None) -> str:
+        """The note for this turn, or "". Each change is told once.
+
+        Says nothing for a generation it has no snapshot of: claiming a
+        lesson is new to a brain that may well have loaded it is worse than
+        waiting for the next rotation to make it certain."""
+        if generation is None or generation != self._brain_generation:
+            return ""
+        current = {l["id"]: l for l in store.list_lessons(
+            status=store.ACTIVE, scope="brain")}
+        added = [current[i] for i in sorted(set(current) - self._brain_known)]
+        dropped = sorted(self._brain_known - set(current))
+        if not added and not dropped:
+            return ""
+        self._brain_known = set(current)
+        lines = [f"- {_unframed(l['title'], TITLE_MAX)} — {_unframed(l['body'], BODY_MAX)}"
+                 for l in added[:BRAIN_LESSONS_MAX]]
+        if dropped:
+            gone = [store.get_lesson(i) for i in dropped]
+            lines += [f"- no longer in use: {_unframed(l['title'], TITLE_MAX)}"
+                      for l in gone if l][:BRAIN_LESSONS_MAX]
+        return BRAIN_UPDATE_HEADER + "\n".join(lines) + "\n" + BRAIN_UPDATE_FOOTER
 
     # -- reporting ----------------------------------------------------------
 
