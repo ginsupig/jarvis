@@ -104,6 +104,9 @@ class Api:
     def __init__(self) -> None:
         self.routes: dict[str, object] = {}
         self.calls: list[str] = []
+        # (path, parsed JSON body) for every POST, so a test can check what
+        # a button actually sent rather than only that something was sent.
+        self.posted: list[tuple[str, object]] = []
 
     def json(self, path: str, body) -> None:
         self.routes[path] = (200, body)
@@ -206,6 +209,13 @@ def _handler_for(api: Api, root: Path):
                        _CONTENT_TYPES.get(target.suffix, "text/plain"))
 
         def do_POST(self):                   # noqa: N802
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length else b""
+            try:
+                body = json.loads(raw) if raw else None
+            except ValueError:
+                body = raw.decode("utf-8", "replace")
+            api.posted.append((urlparse(self.path).path, body))
             self.do_GET()
 
         def do_DELETE(self):                 # noqa: N802
@@ -234,6 +244,7 @@ def quiet_machine() -> Api:
     api.json("/api/memory", {"documents": [], "journal": []})
     api.json("/api/projects/view", {"projects": [], "taken_at": 0.0})
     api.json("/api/specs", {"projects": []})
+    api.json("/api/learning", learning_snapshot())
     api.json("/api/usage/sessions", {
         "measured": False, "scanned_at": 0.0, "active_within_sec": 90.0,
         "roots": [], "files": 0, "bytes_read": 0,
@@ -242,6 +253,28 @@ def quiet_machine() -> Api:
         "active_agents": 0, "daily": [], "models": [],
         "largest_listed": 0, "sessions": [], "own_sessions": []})
     return api
+
+
+def learning_snapshot(pending=(), active=(), skills=(), enabled=True) -> dict:
+    """`/api/learning` as learning.LearningEngine.status() shapes it."""
+    pending, active = list(pending), list(active)
+    return {
+        "local_llm": {"enabled": enabled, "model": "qwen2.5-coder:7b" if enabled else "",
+                      "url": "http://127.0.0.1:11434/v1"},
+        "auto_apply": False,
+        "experiences": {"success": 3, "failure": 1, "unreflected_failures": 0},
+        "lessons": {"candidate": len(pending), "active": len(active), "retired": 0},
+        "pending": pending, "active": active, "skills": list(skills),
+        "busy": [], "activity": [],
+    }
+
+
+def lesson(lesson_id: int = 1, title: str = "Run the tests first",
+           body: str = "Run pytest before editing python code.",
+           status: str = "candidate", risky: bool = False, scope: str = "runs") -> dict:
+    return {"id": lesson_id, "scope": scope, "title": title, "body": body,
+            "source": "reflection", "status": status, "uses": 4,
+            "reliability": 0.75, "evidence": 2, "risky": risky, "parents": []}
 
 
 def tokens(total: int = 0) -> dict:

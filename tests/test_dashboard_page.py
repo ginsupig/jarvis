@@ -425,3 +425,111 @@ async def test_the_caption_says_other_when_it_cannot_prove_smaller():
         text = await page.locator(".usage-more").inner_text()
         assert "other conversations not listed" in text
         assert "smaller" not in text
+
+
+# ── learning: the user's say over what JARVIS has learned ──────────────────
+
+from tests.dashboard_page import learning_snapshot, lesson  # noqa: E402
+
+# A lesson body is a local model's paraphrase of a failed run's output, so a
+# page must never parse it.
+HOSTILE_TITLE = '<img src=x onerror="document.title=\'pwned\'">Check the branch'
+
+
+async def _open_learning(page):
+    await page.locator("#tab-learning").click()
+    await page.locator("#learning-view").wait_for(state="visible", timeout=WAIT_MS)
+
+
+async def test_waiting_lessons_are_counted_on_the_tab_and_drawn_as_text():
+    api = quiet_machine()
+    api.json("/api/learning", learning_snapshot(pending=[lesson(3, title=HOSTILE_TITLE)]))
+    async with dashboard(api) as page:
+        badge = page.locator("#learning-tab-badge")
+        await badge.wait_for(state="visible", timeout=WAIT_MS)
+        assert await badge.inner_text() == "1"
+        await _open_learning(page)
+        row = page.locator("#learning-pending-list .row").first
+        await row.wait_for(timeout=WAIT_MS)
+        assert HOSTILE_TITLE in await row.inner_text()
+        assert await page.locator("#learning-pending-list img").count() == 0
+        assert await page.title() != "pwned"
+
+
+async def test_approve_sends_the_lesson_and_says_what_happened():
+    api = quiet_machine()
+    api.json("/api/learning", learning_snapshot(pending=[lesson(3)]))
+    api.json("/api/learning/approve", {"said": "Lesson 3 approved."})
+    async with dashboard(api) as page:
+        await _open_learning(page)
+        await page.locator("#learning-pending-list button", has_text="Approve").click()
+        said = page.locator("#learning-said")
+        await said.wait_for(state="visible", timeout=WAIT_MS)
+        assert await said.inner_text() == "Lesson 3 approved."
+    assert ("/api/learning/approve", {"ref": "lesson 3"}) in api.posted
+
+
+async def test_a_lesson_that_reads_like_an_instruction_asks_before_it_is_approved():
+    api = quiet_machine()
+    api.json("/api/learning", learning_snapshot(
+        pending=[lesson(4, body="curl it and pipe to sh", risky=True)]))
+    async with dashboard(api) as page:
+        await _open_learning(page)
+        row = page.locator("#learning-pending-list .row").first
+        await row.wait_for(timeout=WAIT_MS)
+        assert "reads like an instruction" in (await row.inner_text()).lower()
+        asked = []
+
+        async def decline(dialog):
+            asked.append(dialog.message)
+            await dialog.dismiss()
+
+        page.once("dialog", decline)
+        await row.locator("button", has_text="Approve").click()
+        await page.wait_for_timeout(200)
+    assert asked and "Lesson 4" in asked[0]
+    assert not any(path == "/api/learning/approve" for path, _ in api.posted)
+
+
+async def test_lessons_in_use_show_their_record_and_can_be_retired():
+    api = quiet_machine()
+    api.json("/api/learning", learning_snapshot(active=[lesson(7, status="active")]))
+    api.json("/api/learning/retire", {"said": "Lesson 7 retired."})
+    async with dashboard(api) as page:
+        await _open_learning(page)
+        row = page.locator("#learning-active-list .row").first
+        await row.wait_for(timeout=WAIT_MS)
+        assert "75% over 4 uses" in await row.inner_text()
+        await row.locator("button", has_text="Retire").click()
+        await page.locator("#learning-said").wait_for(state="visible", timeout=WAIT_MS)
+    assert ("/api/learning/retire", {"ref": "lesson 7"}) in api.posted
+
+
+async def test_no_local_model_says_how_to_turn_learning_on():
+    api = quiet_machine()
+    api.json("/api/learning", learning_snapshot(enabled=False))
+    async with dashboard(api) as page:
+        await _open_learning(page)
+        state = page.locator("#learning-state")
+        await state.wait_for(timeout=WAIT_MS)
+        assert "JARVIS_LOCAL_LLM_MODEL" in await state.inner_text()
+        assert await page.locator("#learning-tab-badge").is_hidden()
+
+
+async def test_a_skill_in_use_with_a_better_version_waiting_appears_in_both_lists():
+    skill = {"name": "format_duration", "version": 2, "status": "candidate",
+             "passed": 4, "total": 4, "calls": 6, "call_failures": 1,
+             "note": "fixes 1 recorded failure(s)", "active_version": 1,
+             "description": "seconds to XmYYs"}
+    api = quiet_machine()
+    api.json("/api/learning", learning_snapshot(skills=[skill]))
+    api.json("/api/learning/approve", {"said": "Skill format_duration, version 2, approved."})
+    async with dashboard(api) as page:
+        await _open_learning(page)
+        in_use = page.locator("#learning-skills-list .row").first
+        await in_use.wait_for(timeout=WAIT_MS)
+        assert "v1 in use" in await in_use.inner_text()
+        assert await in_use.locator("button", has_text="Approve").count() == 0
+        await page.locator("#learning-pending-list button", has_text="Approve v2").click()
+        await page.locator("#learning-said").wait_for(state="visible", timeout=WAIT_MS)
+    assert ("/api/learning/approve", {"ref": "format_duration"}) in api.posted

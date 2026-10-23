@@ -420,6 +420,12 @@ EXEMPT = {
         "one line each and AFTER the user's verbatim request; only lessons the "
         "user approved, or that are on trial under auto-apply having passed "
         "`looks_risky`, are ever chosen (test_learning.py pins both)"),
+    "learning.brain_lessons_update": (
+        "it puts a lesson's title and body in front of the user's words on the "
+        "brain's next turn — but only ACTIVE brain lessons, the same text "
+        "LESSONS.md would hold, each flattened to one line with its square "
+        "brackets removed so the note's own markers cannot be forged "
+        "(test_learning.py pins both)"),
     "learning.export_brain_lessons": (
         "LESSONS.md is trusted system text, so it holds only ACTIVE brain "
         "lessons — which no reflection can make active without the user, "
