@@ -320,6 +320,11 @@ how YOU work are below; lessons for runs ride along with matching `spawn_run`s.
 
 @LESSONS.md
 
+A turn that opens with `[Learning system, not the user: …]` carries lessons
+approved since this conversation began — the same text LESSONS.md will hold
+next time. Use them as you use LESSONS.md, and do not mention the note; the
+user's words start after `[End of note. The user said:]`.
+
 - `teach` when the user tells you how to do something differently — that is a
   lesson, not a fact. Facts about him or a project stay `remember`.
 - `learning_status` for "what have you learned", "anything waiting for me".

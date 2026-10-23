@@ -101,7 +101,8 @@ arbitrary LLM and file content, so everything goes through
 - `frontend/src/orb.ts` — Three.js particle orb visualization
 - `frontend/src/voice.ts` — Web Speech API + audio playback
 - `frontend/src/main.ts` — Frontend state machine
-- `frontend/src/dashboard/` — The `/dashboard` run monitor (vanilla TS)
+- `frontend/src/dashboard/` — The `/dashboard` run monitor (vanilla TS); `learning.ts` is
+  its Learning tab (approve / retire, over `/api/learning`)
 - `run_store.py` — SQLite `runs` / `run_events` tables, six-value status enum
 - `run_executor.py` — Spawns `claude -p --output-format stream-json` and drives
   each run to a terminal state, streaming its events into the store
@@ -154,7 +155,9 @@ arbitrary LLM and file content, so everything goes through
   are judged against), versioned skills,
   and the failing inputs each skill must survive
 - `learning.py` — The engine: observe, reflect, apply, evaluate, consolidate,
-  write and improve skills. Writes `LESSONS.md` (active brain lessons only)
+  write and improve skills. Writes `LESSONS.md` (active brain lessons only),
+  and hands brain lessons approved mid-generation to the next user turn as a
+  framed note, since `@LESSONS.md` is only read when the brain starts
 - `data_paths.py` — Single source of truth for where data is written
 - `market.py` — The market study: Alpaca bars (read-only; the client has
   no account or order method) into `market_*` tables in jarvis.db, the
