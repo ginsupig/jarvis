@@ -396,6 +396,11 @@ _FOR_THE_LOCAL_MODEL = (
 # Not driven, each with the reason. An entry here is a decision, not a
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
+_MARKET_NUMBERS = (
+    "it reads no session or run at all: every value is a number market.py "
+    "computed from price bars, a ticker held to `market.SYMBOL_RE`, or a word "
+    "market.py chose itself (a pattern status, 'open'/'done', its own regime "
+    "sentence)")
 EXEMPT = {
     "learning._activate": _LEARNING_ROW,
     "learning._lesson_summary": _LEARNING_ROW,
@@ -663,6 +668,12 @@ EXEMPT = {
         "sentence is `_describe_run`\'s and the task heading is "
         "`_build_progress_clause`\'s — all three driven. `project_name` "
         "appears once, in a `==` comparison"),
+    # The market study. `status`, `state` and `summary` are keys of its own
+    # dicts — a pattern's verdict, the session's open/done, the regime
+    # sentence — which share a name with session fields and nothing else.
+    "market.compose_brief": _MARKET_NUMBERS,
+    "market.describe_regime": _MARKET_NUMBERS,
+    "server.tool_market_brief": _MARKET_NUMBERS,
 }
 
 

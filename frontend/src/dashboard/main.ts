@@ -17,6 +17,7 @@ import { initMemory, refreshMemory } from "./memory";
 import { initProjects, refreshProjects } from "./projects";
 import { initSpecs, refreshSpecs } from "./specs";
 import { initUsage, refreshUsageView } from "./usage";
+import { initMarket, refreshMarketView } from "./market";
 import {
   el, row, readout, bar, pill, setTone, statusDot, statusPill, stateStyle,
   emptyState, flash,
@@ -463,6 +464,7 @@ function setupTabs(): void {
     projects: document.getElementById("projects-view"),
     specs: document.getElementById("specs-view"),
     usage: document.getElementById("usage-view"),
+    market: document.getElementById("market-view"),
   };
   for (const tab of tabs) {
     tab.addEventListener("click", () => {
@@ -489,6 +491,7 @@ function setupTabs(): void {
       // sitting open and the wrong one for a tab just opened — the numbers
       // would be up to a minute stale at the moment they are looked at.
       if (view === "usage") void refreshUsageView();
+      if (view === "market") void refreshMarketView();
     });
   }
 }
@@ -513,6 +516,8 @@ document.addEventListener("DOMContentLoaded", () => {
   // brain takes a turn, and the transcripts are written by other processes
   // entirely. It loads up front and polls.
   initUsage();
+  // The market study runs on its own schedule; the view polls it.
+  initMarket();
 
   connectLive({
     onReconcile: () => void reconcile(),

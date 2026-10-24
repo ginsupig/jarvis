@@ -813,6 +813,43 @@ TOOL_SPECS = [
             "properties": {"skill": {"type": "string"}},
         },
     },
+    {
+        "name": "market_brief",
+        "description": (
+            "Your study of the stock market: the trend and volatility regime, "
+            "breadth, sector leadership, the user's watchlist and today's movers, "
+            "alerts, and which patterns have held up under testing and which were "
+            "rejected as noise. With `symbol`, that one ticker in detail. Use it for "
+            "'what's the market doing', 'how's NVDA', 'any patterns', 'anything "
+            "unusual today'. Data is 15 minutes delayed. Say the numbers it gives; "
+            "never predict prices, and a pattern is only an edge if it says "
+            "'confirmed'."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"symbol": {"type": "string",
+                                      "description": "A ticker, e.g. 'NVDA'. Omit for the whole brief."}},
+        },
+    },
+    {
+        "name": "market_watchlist",
+        "description": (
+            "Show or change the tickers you study beyond the market ETFs. `add` "
+            "and `remove` are lists of ticker symbols; with neither, it lists them."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "add": {"type": "array", "items": {"type": "string"}},
+                "remove": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+    },
+    {
+        "name": "market_refresh",
+        "description": (
+            "Re-run the market study now instead of waiting for the next scheduled "
+            "pass. Background work; say you are on it and end your turn."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
 ]
 
 # Tools this machine cannot perform on Windows, left out of what the brain is

@@ -12,6 +12,15 @@ def _never_spawn_a_real_brain(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _never_study_the_real_market(monkeypatch):
+    """server.lifespan starts the market study, which calls Alpaca. No test
+    may reach the network, and the developer's .env may hold real keys."""
+    monkeypatch.setenv("JARVIS_MARKET_AUTOSTART", "0")
+    monkeypatch.delenv("APCA_API_KEY_ID", raising=False)
+    monkeypatch.delenv("APCA_API_SECRET_KEY", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _never_post_a_real_notification(monkeypatch, request):
     """No test may spam the developer's Notification Centre.
 

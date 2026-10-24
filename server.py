@@ -97,6 +97,7 @@ import dialog
 import jarvis_memory
 import learning
 import learning_store
+import market
 import notifier
 import sandbox
 import tts
@@ -1868,6 +1869,12 @@ async def lifespan(application: FastAPI):
         # Learning is an addition; it must never be the reason JARVIS is mute.
         log.warning("learning engine did not start", exc_info=True)
 
+    if market.autostart():
+        try:
+            await market_engine.start()
+        except Exception:
+            log.warning("market study did not start", exc_info=True)
+
     await start_brain_and_speech()
     await start_session_watcher()
     # Deliberately not awaited: every check is time-boxed to 5s, so running
@@ -1886,6 +1893,7 @@ async def lifespan(application: FastAPI):
     if unsubscribe is not None:
         unsubscribe(learning_engine.on_run_message)
     await learning_engine.stop()
+    await market_engine.stop()
 
 
 # The interactive OpenAPI console is a "Try it out" button on every route
@@ -6669,6 +6677,157 @@ async def api_learning_approve(body: LearningRef):
 async def api_learning_retire(body: LearningRef):
     await asyncio.to_thread(_learning_ready)
     return {"said": await asyncio.to_thread(learning_engine.retire, body.ref)}
+
+
+# ---------------------------------------------------------------------------
+# Market study: trends, movement, and patterns re-tested after every close.
+# Read-only market data; the engine, its schedule and its statistics are in
+# market.py. JARVIS studies the market here; he cannot trade from it.
+# ---------------------------------------------------------------------------
+
+async def _market_notify(line: str, subtitle: str) -> None:
+    """The after-close summary. Posted whether or not a tab is open — the
+    user asked for it daily — and only ever text market.py composed from
+    numbers, so there is no foreign text in it."""
+    if notifier.available():
+        await notifier.notify("JARVIS", line, subtitle=subtitle)
+
+
+market_engine = market.MarketEngine(notify=_market_notify)
+
+
+def _market_symbols(value) -> list[str]:
+    if isinstance(value, str):
+        value = re.split(r"[,\s]+", value)
+    return [str(v) for v in (value or []) if str(v).strip()]
+
+
+def _say_pct(value) -> str:
+    return "unknown" if value is None else f"{value:+.1f}%"
+
+
+async def tool_market_brief(args: dict) -> str:
+    """The latest study, as numbers the brain can say back. Everything in it
+    is computed here from price bars; the only strings are ticker symbols
+    (held to market.SYMBOL_RE) and sentences market.py wrote itself."""
+    status = await asyncio.to_thread(market_engine.status)
+    if not status["enabled"]:
+        return "Market study is switched off (JARVIS_MARKET=0)."
+    if not status["configured"]:
+        return ("I have no market data keys. Add APCA_API_KEY_ID and APCA_API_SECRET_KEY "
+                "(a free Alpaca account) to .env and restart me.")
+    snap = status["snapshot"]
+    if not snap:
+        why = f" The last attempt failed: {status['last_error']}." if status["last_error"] else ""
+        return "I haven't finished my first pass over the market yet." + why
+    symbol = market.normalise_symbol(args.get("symbol") or "")
+    if symbol:
+        rows = snap["watchlist"] + snap["market"] + snap["sectors"]
+        view = next((v for v in rows if v["symbol"] == symbol), None)
+        if view is None:
+            return f"I don't follow {symbol}; add it to the watchlist and I will."
+        fired = [s["label"] + f" ({s['status']})" for s in snap["setups"] if symbol in s["symbols"]]
+        alerts = [a["text"] for a in status["alerts"] if a["symbol"] == symbol][:3]
+        return "\n".join(part for part in (
+            f"{symbol} at {view['price']}, {_say_pct(view['change'])} today, "
+            f"{_say_pct(view['ret_5d'])} over 5 days and {_say_pct(view['ret_20d'])} over 20 "
+            f"({_say_pct(view['rs_20d'])} against the S&P).",
+            f"Trend: {view['trend']}; {_say_pct(view['vs_50d'])} from its 50-day and "
+            f"{_say_pct(view['vs_200d'])} from its 200-day; RSI {view['rsi14']}; "
+            f"daily range {view['atr_pct']}%; volume {view['rvol']}× usual for the time of day; "
+            f"{_say_pct(view['from_high'])} from its 52-week high.",
+            "Patterns on the last close: " + ", ".join(fired) if fired else "",
+            "Alerts: " + "; ".join(alerts) if alerts else "",
+        ) if part)
+    lines = [snap["brief"]]
+    confirmed = [p for p in snap["patterns"] if p["status"] == market.CONFIRMED]
+    for p in confirmed[:4]:
+        hold = p["stats"].get("holdout", {})
+        lines.append(f"Confirmed: {p['label']} — {p['description']}; recent data "
+                     f"{100 * hold.get('mean', 0):+.2f}% per trade after costs, t {hold.get('t', 0)}.")
+    if snap["session"]["state"] == "open":
+        lines.append("The session is still open; I update every "
+                     f"{status['interval_min']} minutes.")
+    return "\n".join(lines)
+
+
+async def tool_market_watchlist(args: dict) -> str:
+    add, remove = _market_symbols(args.get("add")), _market_symbols(args.get("remove"))
+    await asyncio.to_thread(market.init_db)
+    if not add and not remove:
+        current = await asyncio.to_thread(market.watchlist)
+        return "I'm watching " + (", ".join(current) if current else "nothing") + "."
+    result = await asyncio.to_thread(market.change_watchlist, add, remove)
+    if result["added"]:
+        market_engine.wake()
+    said = []
+    if result["added"]:
+        said.append("added " + ", ".join(result["added"]))
+    if result["removed"]:
+        said.append("dropped " + ", ".join(result["removed"]))
+    if result["refused"]:
+        said.append("could not add " + ", ".join(map(str, result["refused"]))
+                    + f" (a ticker, and at most {market.WATCHLIST_MAX})")
+    said_text = "; ".join(said) or "nothing changed"
+    return (said_text[0].upper() + said_text[1:]
+            + f". Watching {len(result['watchlist'])} symbols.")
+
+
+async def tool_market_refresh(args: dict) -> str:
+    if not market_engine.configured:
+        return "I have no market data keys to refresh with."
+    _background.add(task := asyncio.create_task(_market_refresh_quietly()))
+    task.add_done_callback(_background.discard)
+    return "Refreshing the market study now; it takes under a minute."
+
+
+async def _market_refresh_quietly() -> None:
+    try:
+        await market_engine.tick(force=True)
+    except Exception as e:
+        market_engine.last_error = f"{type(e).__name__}: {e}"[:300]
+        log.warning("market refresh failed", exc_info=True)
+
+
+TOOL_HANDLERS.update({
+    "market_brief": tool_market_brief,
+    "market_watchlist": tool_market_watchlist,
+    "market_refresh": tool_market_refresh,
+})
+# Changing what he follows, or spending a burst of API calls, is the user's call.
+ACTING_TOOLS.update({"market_watchlist", "market_refresh"})
+TAINT_EXEMPT_TOOLS.update({
+    "market_brief": (
+        "it reports numbers JARVIS computed from price bars, in sentences "
+        "market.py wrote; the only foreign strings are ticker symbols, held "
+        "to a letters-only pattern"),
+    "market_watchlist": "it edits the watchlist and says back ticker symbols",
+    "market_refresh": "it starts background work and says only that it has",
+})
+
+
+@app.get("/api/market")
+async def api_market():
+    return await asyncio.to_thread(market_engine.status)
+
+
+@app.post("/api/market/refresh")
+async def api_market_refresh():
+    return {"said": await tool_market_refresh({})}
+
+
+class MarketWatchlistChange(BaseModel):
+    add: list[str] = []
+    remove: list[str] = []
+
+
+@app.post("/api/market/watchlist")
+async def api_market_watchlist(body: MarketWatchlistChange):
+    await asyncio.to_thread(market.init_db)
+    result = await asyncio.to_thread(market.change_watchlist, body.add, body.remove)
+    if result["added"]:
+        market_engine.wake()
+    return result
 
 
 @app.websocket("/ws/sessions")

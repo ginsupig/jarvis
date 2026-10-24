@@ -156,6 +156,12 @@ arbitrary LLM and file content, so everything goes through
 - `learning.py` — The engine: observe, reflect, apply, evaluate, consolidate,
   write and improve skills. Writes `LESSONS.md` (active brain lessons only)
 - `data_paths.py` — Single source of truth for where data is written
+- `market.py` — The market study: Alpaca bars (read-only; the client has
+  no account or order method) into `market_*` tables in jarvis.db, the
+  regime / sector / watchlist analysis, alerts, and a fixed pattern library
+  re-tested after every close (discovery vs holdout, net of cost, same-day
+  events collapsed, forward signals scored). Surfaced as `market_brief` /
+  `market_watchlist` / `market_refresh`, `/api/market`, and the Market tab
 
 ## Where the author's own notes live
 This repository ships nothing personal. Research notes, milestone
@@ -199,6 +205,12 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   the local server. `JARVIS_LOCAL_LLM_URL` (default
   `http://127.0.0.1:11434/v1`), `JARVIS_LOCAL_LLM_API_KEY`,
   `JARVIS_LOCAL_LLM_TIMEOUT` (default 120s) go with it
+- `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY` (optional) — Alpaca market-data
+  keys for the market study; without them it stays idle. `JARVIS_MARKET=0`
+  switches it off, `JARVIS_MARKET_INTERVAL_MIN` (default 15) is its cadence
+  while the market is open, `JARVIS_MARKET_WATCHLIST` seeds the watchlist on
+  first start, and `JARVIS_MARKET_AUTOSTART=0` (every test sets it) builds
+  the engine without starting its loop
 - `JARVIS_LEARNING_AUTO_APPLY` (optional, default off) — put reflected run
   lessons on trial without approval, and adopt improved versions of approved
   skills that pass their full suite and gain no new module. Brain lessons and
