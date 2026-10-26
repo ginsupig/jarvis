@@ -85,6 +85,7 @@ def test_command_has_exact_flags(tmp_path, monkeypatch):
         "mcp__jarvis__fleet_study_now,"
         "mcp__jarvis__options_study,mcp__jarvis__trade_plan,mcp__jarvis__trade_record,"
         "mcp__jarvis__debate_scorecard,mcp__jarvis__debate_round,"
+        "mcp__jarvis__empire_status,mcp__jarvis__empire_study,"
         # The CLI's own two, and the only built-ins here: without them JARVIS
         # can read a page he was given the address of and find nothing.
         "WebSearch,WebFetch")

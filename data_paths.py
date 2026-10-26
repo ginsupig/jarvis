@@ -132,6 +132,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "55968da8959e93b57cd1d87fa2d037bd360e68700ef9c721c82dbfe6d3f8a232",  # the autopilot and the fleet study
     "f14ba0e223767c0c018a041fef60e7f81f8db1d93c0099e23a7e7a5160224d1b",  # options and trade suggestions
     "f8ed2572a0d7384cdd1f5a06a73018146e74e9964385972a34c50076a7de7912",  # lessons approved mid-conversation arrive as a note
+    "7854023f5366db4e97d9e750e6cdeaa62063b48146bda4d877aa97fa26ac2e57",  # MegaEmpire: look, never trade
 })
 
 # The same list, for the connections file. APPEND the new hash whenever
