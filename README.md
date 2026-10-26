@@ -304,6 +304,25 @@ Approve / Retire button on each. A lesson about how he works that you approve
 mid-conversation reaches him on your next sentence, not at his next context
 reset.
 
+**Studying MegaEmpire.** Point JARVIS at MegaEmpire's trading bots and he
+studies their record, read-only:
+
+```env
+JARVIS_EMPIRE_URL=http://127.0.0.1:8765                  # MegaMind's dashboard
+JARVIS_EMPIRE_OUTCOMES=fable=C:/fable/data,orb_elite=C:/orb_elite/state/feedback
+```
+
+Every 15 minutes he reads the bots' new `outcomes.jsonl` lines and finds the
+conditions under which a strategy is clearly not its usual self: "ORB does
+worse in a choppy regime: −0.18R per trade over 61 trades, against +0.49R
+across all 160". Those findings are computed, not guessed, so they need no
+model and no approval; each rewrites its own numbers every cycle and retires
+the cycle the record stops supporting it. With a local model he also proposes
+hypotheses about the record, which wait for you like any other lesson. Ask
+"how are the bots doing?" (`empire_status`) or "what have you learned about
+the trading?" (`empire_study`). He cannot place a trade, change a risk limit
+or approve a MegaMind action; there is no tool for it.
+
 **What it trusts.** A lesson distilled from a run's output is a stranger's
 words one step removed, and runs go out with `--dangerously-skip-permissions`.
 So by default nothing the model proposes is used until you approve it. With

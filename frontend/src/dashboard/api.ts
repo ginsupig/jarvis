@@ -268,7 +268,7 @@ export type LearningStatus = "candidate" | "active" | "retired";
 
 export interface LearnedLesson {
   id: number;
-  scope: "runs" | "brain";
+  scope: "runs" | "brain" | "trading";
   title: string;
   body: string;
   /** reflection | consolidation | user */
@@ -308,6 +308,13 @@ export interface LearningSnapshot {
   skills: LearnedSkill[];
   busy: string[];
   activity: string[];
+  /** MegaEmpire, the trading bots JARVIS studies read-only. */
+  empire?: {
+    configured: boolean;
+    url: string;
+    trades_studied: number;
+    last_study: { at: number; trades: number; findings: number; sources: string[] } | null;
+  };
 }
 
 export async function getLearning(): Promise<LearningSnapshot> {

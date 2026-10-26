@@ -155,6 +155,9 @@ arbitrary LLM and file content, so everything goes through
   write and improve skills. Writes `LESSONS.md` (active brain lessons only),
   and hands brain lessons approved mid-generation to the next user turn as a
   framed note, since `@LESSONS.md` is only read when the brain starts
+- `empire.py` — MegaEmpire, read-only: MegaMind's dashboard (`/api/empire`)
+  and the bots' `outcomes.jsonl`, read incrementally; per-strategy stats and
+  the "findings" (`trading` lessons) learning.py keeps current and retires
 - `data_paths.py` — Single source of truth for where data is written
 
 ## Where the author's own notes live
@@ -203,6 +206,10 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   lessons on trial without approval, and adopt improved versions of approved
   skills that pass their full suite and gain no new module. Brain lessons and
   new skills always wait for the user
+- `JARVIS_EMPIRE_URL` / `JARVIS_EMPIRE_OUTCOMES` / `JARVIS_EMPIRE_STUDY_MIN`
+  (optional) — MegaEmpire's dashboard, its bots' outcome logs (comma
+  separated, `name=path` allowed), and how often to re-read them (default 15
+  minutes). Read-only: nothing in JARVIS can trade or approve over there
 - `JARVIS_ALLOWED_ORIGINS` (optional) — extra origins the web boundary
   accepts, comma-separated. Only needed when the page is opened at an
   address JARVIS does not serve from itself (a LAN IP, a tunnel). Their

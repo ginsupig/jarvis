@@ -420,6 +420,25 @@ EXEMPT = {
         "one line each and AFTER the user's verbatim request; only lessons the "
         "user approved, or that are on trial under auto-apply having passed "
         "`looks_risky`, are ever chosen (test_learning.py pins both)"),
+    "empire.parse_trade": (
+        "it reads one line of a trading bot's outcomes log into a Trade; the "
+        "only text it builds is the row's own dedupe key, and every label is "
+        "flattened and cut to forty characters by `_label` on the way in"),
+    "learning._apply_findings": (
+        "the titles and bodies it writes are built from `empire.Finding`'s own "
+        "templates — a strategy and regime name plus numbers — and reach the "
+        "brain only through `empire_study`, inside an untrusted block, in a "
+        "tool that taints the turn; the activity line is one_line'd"),
+    "learning.review_strategies": _FOR_THE_LOCAL_MODEL,
+    "server.tool_empire_status": (
+        "the head line carries numbers and the regime and autonomy words "
+        "through `_plain_name`; every bot name, status and MegaMind alert is "
+        "inside a `_wrap_untrusted` block, and the tool is in TAINTING_TOOLS, so "
+        "nothing it returns can drive an acting tool in the same turn"),
+    "server.tool_empire_study": (
+        "the head line is counts only; strategy names, findings and waiting "
+        "hypotheses are all inside a `_wrap_untrusted` block, and the tool is in "
+        "TAINTING_TOOLS (test_empire.py pins both)"),
     "learning.brain_lessons_update": (
         "it puts a lesson's title and body in front of the user's words on the "
         "brain's next turn — but only ACTIVE brain lessons, the same text "
