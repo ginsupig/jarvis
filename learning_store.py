@@ -81,6 +81,22 @@ def init_db() -> None:
                 note        TEXT NOT NULL DEFAULT ''
             );
 
+            CREATE TABLE IF NOT EXISTS learning_runs (
+                run_id    TEXT PRIMARY KEY,
+                ts        REAL NOT NULL,
+                arm       TEXT NOT NULL,
+                lessons   INTEGER NOT NULL DEFAULT 0,
+                outcome   TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_learning_runs_ts ON learning_runs(ts);
+
+            CREATE TABLE IF NOT EXISTS learning_skill_calls (
+                id    INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts    REAL NOT NULL,
+                name  TEXT NOT NULL,
+                ok    INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS learning_applications (
                 run_id     TEXT NOT NULL,
                 lesson_id  INTEGER NOT NULL,
@@ -373,6 +389,9 @@ def retire_skill(name: str) -> bool:
 
 def count_call(skill_id: int, ok: bool) -> None:
     with closing(_connect()) as conn, conn:
+        conn.execute("INSERT INTO learning_skill_calls (ts, name, ok) "
+                     "SELECT ?, name, ? FROM learning_skills WHERE id = ?",
+                     (time.time(), int(ok), skill_id))
         conn.execute("UPDATE learning_skills SET calls = calls + 1, "
                      "call_failures = call_failures + ? WHERE id = ?",
                      (0 if ok else 1, skill_id))
@@ -433,3 +452,54 @@ def set_cursor(path: str, offset: int, size: int) -> None:
         conn.execute("INSERT INTO learning_cursors (path, offset, size) VALUES (?, ?, ?) "
                      "ON CONFLICT(path) DO UPDATE SET offset = excluded.offset, "
                      "size = excluded.size", (path, offset, size))
+
+
+# ---------------------------------------------------------------------------
+# The control group: which runs were given lessons, which were held back
+# ---------------------------------------------------------------------------
+#
+# Arms: "treated" (lessons applied), "holdout" (lessons were relevant but
+# withheld at random), "none" (nothing relevant — outside the comparison).
+# Only treated vs holdout answers "do the lessons help?"; both were eligible.
+
+ARMS = ("treated", "holdout", "none")
+
+
+def record_run_arm(run_id: str, arm: str, lessons: int) -> None:
+    if arm not in ARMS:
+        raise ValueError(f"unknown arm {arm!r}")
+    with closing(_connect()) as conn, conn:
+        conn.execute("INSERT OR IGNORE INTO learning_runs (run_id, ts, arm, lessons) "
+                     "VALUES (?, ?, ?, ?)", (run_id, time.time(), arm, lessons))
+
+
+def settle_run_arm(run_id: str, outcome: str) -> None:
+    """`success`, `failure` or `neutral` (cancelled, or says nothing either
+    way). Only the first verdict counts."""
+    with closing(_connect()) as conn, conn:
+        conn.execute("UPDATE learning_runs SET outcome = ? WHERE run_id = ? "
+                     "AND outcome IS NULL", (outcome, run_id))
+
+
+def run_arms_since(ts: float) -> list[dict]:
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT * FROM learning_runs WHERE ts >= ? ORDER BY ts",
+                            (ts,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def skill_calls_since(ts: float) -> list[dict]:
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT * FROM learning_skill_calls WHERE ts >= ? ORDER BY ts",
+                            (ts,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def lesson_events_since(ts: float) -> list[dict]:
+    """created_at / updated_at / status / source of every lesson touched since
+    `ts`, for counting what was learned and retired per week."""
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT id, created_at, updated_at, status, scope, source, note "
+                            "FROM learning_lessons WHERE created_at >= ? OR updated_at >= ?",
+                            (ts, ts)).fetchall()
+    return [dict(r) for r in rows]

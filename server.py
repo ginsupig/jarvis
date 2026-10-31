@@ -4173,7 +4173,11 @@ async def tool_spawn_run(args: dict) -> str:
     # The user's own words, framed for a process nobody can answer. See
     # UNATTENDED_PREAMBLE. Then whatever earlier runs in this area taught —
     # AFTER his words, so they stay verbatim and first.
-    lessons = await asyncio.to_thread(_lessons_for_run, prompt, name)
+    relevant = await asyncio.to_thread(_lessons_for_run, prompt, name)
+    # The control group: a random share of runs that HAD relevant lessons are
+    # sent without them, so whether lessons help is measured rather than
+    # assumed (learning_curve.py).
+    arm, lessons = learning_engine.choose_arm(relevant)
     composed = compose_run_prompt(prompt) + learning.LearningEngine.format_for_run(lessons)
 
     try:
@@ -4187,6 +4191,7 @@ async def tool_spawn_run(args: dict) -> str:
         # Recorded so the run's outcome can credit or blame each one.
         await asyncio.to_thread(learning_store.record_application, run_id,
                                 [lesson["id"] for lesson in lessons])
+    await asyncio.to_thread(_record_arm, run_id, arm, len(relevant))
 
     # "cancel that" and "how's it going" have to work: nobody can say a UUID
     # out loud, so the run JARVIS just started is remembered as the referent
@@ -4389,6 +4394,15 @@ def _run_gist(run: dict, words: int = 7) -> str:
 # answer we would reach — so the cap costs nothing and bounds the read.
 _OUTCOME_EVENT_CAP = 800
 _OUTCOME_PAGE = 200
+
+
+def _record_arm(run_id: str, arm: str, relevant: int) -> None:
+    """Never the reason a started run is reported as a failure."""
+    try:
+        learning_store.init_db()
+        learning_store.record_run_arm(run_id, arm, relevant)
+    except Exception:
+        log.warning("could not record the run's control-group arm", exc_info=True)
 
 
 def _lessons_for_run(prompt: str, project: str) -> list[dict]:
@@ -6440,6 +6454,10 @@ async def tool_learning_status(args: dict) -> str:
     if status["busy"]:
         lines.append("working on — " + ", ".join(status["busy"]))
     text = "; ".join(head) + "."
+    # Whether the lessons help, measured: numbers only, so it sits in the
+    # head line beside the counts rather than inside the untrusted block.
+    report = await asyncio.to_thread(learning_engine.learning_report)
+    text += "\n" + report["said"]
     if lines:
         text += "\n" + _wrap_untrusted(_LEARNING_WRAP_NAME, "\n".join(lines))
     return text
@@ -6683,6 +6701,13 @@ async def api_learning():
 
 class LearningRef(BaseModel):
     ref: str
+
+
+@app.get("/api/learning/curve")
+async def api_learning_curve():
+    """The control group's verdict and the weekly learning curve."""
+    await asyncio.to_thread(_learning_ready)
+    return await asyncio.to_thread(learning_engine.learning_report)
 
 
 @app.post("/api/learning/approve")

@@ -50,6 +50,7 @@ import asyncio
 import json
 import logging
 import math
+import random
 import os
 import re
 import time
@@ -59,6 +60,7 @@ from typing import Callable
 import data_paths
 import empire
 import jarvis_memory
+import learning_curve
 import learning_store as store
 import sandbox
 from local_llm import LocalLLM, LocalLLMError
@@ -253,6 +255,23 @@ TRADE_STUDY = "trade study"      # the source of findings computed from the reco
 USER_RETIRED = "retired by the user"
 
 
+DEFAULT_HOLDOUT = 0.2
+MAX_HOLDOUT = 0.5
+
+
+def holdout_rate_from_env() -> float:
+    """The share of eligible runs whose lessons are withheld, 0 to 0.5.
+
+    0 turns the control group off; above half would withhold from the very
+    runs the lessons are meant to improve, so it is capped there."""
+    raw = os.getenv("JARVIS_LEARNING_HOLDOUT", "")
+    try:
+        rate = float(raw) if raw.strip() else DEFAULT_HOLDOUT
+    except ValueError:
+        rate = DEFAULT_HOLDOUT
+    return min(max(rate, 0.0), MAX_HOLDOUT)
+
+
 def study_interval_sec() -> float:
     try:
         minutes = float(os.getenv("JARVIS_EMPIRE_STUDY_MIN", "") or 15)
@@ -269,8 +288,12 @@ class LearningEngine:
     def __init__(self, llm: LocalLLM | None = None, *, auto_apply: bool | None = None,
                  outcome_of: Callable[[dict], bool | None] | None = None,
                  prompt_of: Callable[[str], str] | None = None,
-                 empire_config: empire.EmpireConfig | None = None):
+                 empire_config: empire.EmpireConfig | None = None,
+                 holdout_rate: float | None = None, rng: random.Random | None = None):
         self.llm = llm if llm is not None else LocalLLM.from_env()
+        self.holdout_rate = (holdout_rate_from_env() if holdout_rate is None
+                             else min(max(holdout_rate, 0.0), MAX_HOLDOUT))
+        self._rng = rng or random.Random()
         self.empire = empire_config if empire_config is not None \
             else empire.EmpireConfig.from_env()
         self._study_task: asyncio.Task | None = None
@@ -378,6 +401,7 @@ class LearningEngine:
         await asyncio.to_thread(store.record_experience, "run", outcome,
                                 subject=str(run.get("project_name") or ""),
                                 detail=detail, ref=run_id)
+        await asyncio.to_thread(store.settle_run_arm, run_id, outcome)
         touched = await asyncio.to_thread(store.settle_run, run_id, success)
         if touched:
             await asyncio.to_thread(self.reevaluate, touched)
@@ -439,6 +463,28 @@ class LearningEngine:
             ranked.append((relevance * (0.5 + reliability(lesson)), lesson))
         ranked.sort(key=lambda pair: -pair[0])
         return [lesson for _, lesson in ranked[:limit]]
+
+    def choose_arm(self, lessons: list[dict]) -> tuple[str, list[dict]]:
+        """Which group this run is in, and the lessons it actually gets.
+
+        Only a run that HAD relevant lessons is randomised: comparing runs
+        with lessons against runs that had nothing to be given would measure
+        the kind of task, not the advice."""
+        if not lessons:
+            return "none", []
+        if self._rng.random() < self.holdout_rate:
+            return "holdout", []
+        return "treated", lessons
+
+    def learning_report(self, now: float | None = None) -> dict:
+        now = time.time() if now is None else now
+        since = now - (learning_curve.WEEKS + 1) * 7 * 86400
+        report = learning_curve.curve(store.run_arms_since(since),
+                                      store.skill_calls_since(since),
+                                      store.lesson_events_since(since),
+                                      now, holdout_rate=self.holdout_rate)
+        report["said"] = learning_curve.say(report)
+        return report
 
     @staticmethod
     def format_for_run(lessons: list[dict]) -> str:
