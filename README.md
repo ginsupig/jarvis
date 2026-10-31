@@ -298,7 +298,11 @@ The loop (`learning.py`):
 
 Ask "what have you learned?", "approve lesson 4", "learn a skill that parses
 durations", "run this code", or tell him "next time, check the branch first"
-and he `teach`es himself. The dashboard's data is at `/api/learning`.
+and he `teach`es himself. The dashboard's **Learning** tab shows what he has
+learned, each lesson's track record, his skills and their tests, with an
+Approve / Retire button on each. A lesson about how he works that you approve
+mid-conversation reaches him on your next sentence, not at his next context
+reset.
 
 **What it trusts.** A lesson distilled from a run's output is a stranger's
 words one step removed, and runs go out with `--dangerously-skip-permissions`.

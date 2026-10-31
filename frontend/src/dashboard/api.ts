@@ -260,6 +260,83 @@ export async function getMemoryDoc(kind: MemoryKind, slug: string): Promise<Memo
 }
 
 /**
+ * The learning system (`/api/learning`). Lesson titles and bodies were
+ * written by a local model out of failed runs' output — a stranger's words
+ * one step removed — so the view renders them with textContent only.
+ */
+export type LearningStatus = "candidate" | "active" | "retired";
+
+export interface LearnedLesson {
+  id: number;
+  scope: "runs" | "brain";
+  title: string;
+  body: string;
+  /** reflection | consolidation | user */
+  source: string;
+  status: LearningStatus;
+  uses: number;
+  /** 0..1, the Beta posterior of "the work it rode along with succeeded". */
+  reliability: number;
+  evidence: number;
+  /** Reads like an instruction rather than advice; never auto-trialled. */
+  risky: boolean;
+  /** Lessons merged into this one, for a consolidated strategy. */
+  parents: number[];
+}
+
+export interface LearnedSkill {
+  name: string;
+  /** The newest version, which is what `status` / `passed` describe. */
+  version: number;
+  status: LearningStatus;
+  passed: number;
+  total: number;
+  calls: number;
+  call_failures: number;
+  note: string;
+  active_version: number | null;
+  description: string;
+}
+
+export interface LearningSnapshot {
+  local_llm: { enabled: boolean; model: string; url: string };
+  auto_apply: boolean;
+  experiences: Record<string, number>;
+  lessons: Record<LearningStatus, number>;
+  pending: LearnedLesson[];
+  active: LearnedLesson[];
+  skills: LearnedSkill[];
+  busy: string[];
+  activity: string[];
+}
+
+export async function getLearning(): Promise<LearningSnapshot> {
+  return get<LearningSnapshot>("/api/learning");
+}
+
+/** `ref` is "lesson 12", a skill's name, or "all pending". Returns the
+ * sentence JARVIS would have said, which is the outcome either way. */
+async function postLearning(action: "approve" | "retire", ref: string): Promise<string> {
+  const url = `/api/learning/${action}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ref }),
+  });
+  if (!res.ok) throw new ApiError(res.status, url);
+  const body = (await res.json()) as { said: string };
+  return body.said;
+}
+
+export function approveLearning(ref: string): Promise<string> {
+  return postLearning("approve", ref);
+}
+
+export function retireLearning(ref: string): Promise<string> {
+  return postLearning("retire", ref);
+}
+
+/**
  * Projects — the master-detail JOIN of session_watch, run_store, builds and
  * repo_read (see `projects_view.py`). The list shape is deliberately cheap
  * (no session/run payload, no filesystem walk); the detail shape adds both,

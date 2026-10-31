@@ -122,6 +122,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "dfec0e28f7fc734987a1bcffd4feda103bde961f4a4721ce7957a7dccae96487",  # send it, do not ask twice
     "092df6a5e43bc5ed0a31e9f79b1f77cc4849754d1f4ab4807bded122ab97ad5f",  # say "start fresh" when a memory is refused
     "ca9b3f7823812af26aa4a0e6d4e07b25a67b60b46ff69cb209ad98af88b206f8",  # learning: teach, lessons, skills
+    "f8ed2572a0d7384cdd1f5a06a73018146e74e9964385972a34c50076a7de7912",  # lessons approved mid-conversation arrive as a note
 })
 
 # The same list, for the connections file. APPEND the new hash whenever

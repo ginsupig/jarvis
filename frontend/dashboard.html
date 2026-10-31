@@ -31,6 +31,11 @@
         </button>
         <button id="tab-memory" class="tab" data-view="memory"
                 role="tab" aria-selected="false">Memory</button>
+        <button id="tab-learning" class="tab" data-view="learning"
+                role="tab" aria-selected="false">
+          Learning
+          <span id="learning-tab-badge" class="tab-badge" hidden></span>
+        </button>
         <button id="tab-specs" class="tab" data-view="specs"
                 role="tab" aria-selected="false">
           Specs
@@ -149,6 +154,66 @@
             </header>
             <div class="panel-body">
               <div id="memory-journal-list" class="stack"></div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <!-- ── LEARNING ────────────────────────────────────────────────────── -->
+      <div id="learning-view" class="view" hidden>
+        <div id="learning-banner" class="empty" hidden></div>
+        <div id="learning-unavailable" class="empty" hidden>
+          Learning isn't available on this server.
+        </div>
+
+        <div id="learning-body" class="view">
+          <div id="learning-said" class="learning-said" role="status" hidden></div>
+
+          <section id="learning-state-section" class="panel">
+            <header class="panel-head">
+              <h2 class="panel-title">Learning</h2>
+            </header>
+            <div class="panel-body">
+              <div id="learning-state"></div>
+            </div>
+          </section>
+
+          <section id="learning-pending-section" class="panel tone-accent">
+            <header class="panel-head">
+              <h2 class="panel-title">Waiting For You</h2>
+              <span id="learning-pending-meta" class="panel-meta"></span>
+            </header>
+            <div class="panel-body">
+              <div id="learning-pending-list" class="stack"></div>
+            </div>
+          </section>
+
+          <section id="learning-active-section" class="panel">
+            <header class="panel-head">
+              <h2 class="panel-title">In Use</h2>
+              <span id="learning-active-meta" class="panel-meta"></span>
+            </header>
+            <div class="panel-body">
+              <div id="learning-active-list" class="stack"></div>
+            </div>
+          </section>
+
+          <section id="learning-skills-section" class="panel">
+            <header class="panel-head">
+              <h2 class="panel-title">Skills</h2>
+              <span id="learning-skills-meta" class="panel-meta"></span>
+            </header>
+            <div class="panel-body">
+              <div id="learning-skills-list" class="stack"></div>
+            </div>
+          </section>
+
+          <section id="learning-activity-section" class="panel">
+            <header class="panel-head">
+              <h2 class="panel-title">Recently</h2>
+            </header>
+            <div class="panel-body">
+              <div id="learning-activity-list" class="stack stack--tight"></div>
             </div>
           </section>
         </div>

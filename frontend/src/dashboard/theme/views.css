@@ -610,3 +610,15 @@
    one-line brief — not a name in a scannable list, so it wraps instead of
    ellipsing. At 380px "Sweep the theme files for r…" tells you nothing. */
 .sd .row-title { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+
+/* ── Learning ─────────────────────────────────────────────────────────────── */
+.learning-said {
+  margin-bottom: var(--sp-3);
+  font-size: var(--fs-base);
+  color: var(--text-dim);
+}
+.learning-bulk { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.learning-hint { font-size: var(--fs-base); color: var(--text-dim); }
+.learning-row-record { --w: 150px; }
+.learning-activity { font-family: var(--font-mono); font-size: var(--fs-base);
+                     color: var(--text-dim); }
