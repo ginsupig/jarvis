@@ -800,6 +800,28 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "empire_status",
+        "description": (
+            "MegaEmpire's live state, from MegaMind's own dashboard: the market regime, "
+            "today's R across the bots, each bot's status, trades, open positions and "
+            "cooldowns, halted accounts, and how many actions wait on the user's "
+            "approval IN MEGAMIND. Read-only: you cannot trade, change risk or "
+            "approve MegaMind's actions — say so if asked, and point him to MegaMind."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "empire_study",
+        "description": (
+            "What you have learned from MegaEmpire's bots' own trade logs: each "
+            "strategy's record (trades, R per trade, win rate), the conditions — "
+            "market regime, session window — under which a strategy does clearly "
+            "better or worse than usual, and any hypotheses waiting for approval. "
+            "Use it for 'how are the bots doing', 'which strategy works when', "
+            "'what have you learned about the trading'. Quote the numbers; never "
+            "recommend a trade or a position size."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "improve_now",
         "description": (
             "Reflect now instead of waiting: turn recent failures into lessons and "

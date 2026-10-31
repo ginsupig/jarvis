@@ -34,7 +34,9 @@ from data_paths import db_path
 
 CANDIDATE, ACTIVE, RETIRED = "candidate", "active", "retired"
 STATUSES = (CANDIDATE, ACTIVE, RETIRED)
-SCOPES = ("runs", "brain")
+# `trading` lessons are about MegaEmpire's bots (empire.py): knowledge JARVIS
+# reports, never advice handed to a run or text loaded into his own prompt.
+SCOPES = ("runs", "brain", "trading")
 
 
 def _connect() -> sqlite3.Connection:
@@ -101,6 +103,24 @@ def init_db() -> None:
                 call_failures INTEGER NOT NULL DEFAULT 0,
                 note         TEXT NOT NULL DEFAULT '',
                 UNIQUE (name, version)
+            );
+
+            CREATE TABLE IF NOT EXISTS learning_trades (
+                key       TEXT PRIMARY KEY,
+                ts        REAL NOT NULL,
+                bot       TEXT NOT NULL,
+                strategy  TEXT NOT NULL,
+                regime    TEXT NOT NULL,
+                symbol    TEXT NOT NULL,
+                pnl_R     REAL NOT NULL,
+                session   TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_learning_trades_ts ON learning_trades(ts);
+
+            CREATE TABLE IF NOT EXISTS learning_cursors (
+                path    TEXT PRIMARY KEY,
+                offset  INTEGER NOT NULL,
+                size    INTEGER NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS learning_skill_cases (
@@ -222,6 +242,20 @@ def set_lesson_status(lesson_id: int, status: str, note: str = "") -> bool:
                            "updated_at = ? WHERE id = ?",
                            (status, note[:300], time.time(), lesson_id))
         return cur.rowcount > 0
+
+
+def update_lesson_text(lesson_id: int, title: str, body: str) -> None:
+    """Refresh a lesson's wording — for a trading finding whose numbers moved."""
+    with closing(_connect()) as conn, conn:
+        conn.execute("UPDATE learning_lessons SET title = ?, body = ?, updated_at = ? "
+                     "WHERE id = ?", (title, body, time.time(), lesson_id))
+
+
+def lessons_by_key(applies_to: str) -> list[dict]:
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT * FROM learning_lessons WHERE applies_to = ? "
+                            "ORDER BY id DESC", (applies_to,)).fetchall()
+    return [_lesson(r) for r in rows]
 
 
 def add_evidence(lesson_id: int) -> None:
@@ -356,3 +390,46 @@ def skill_cases(name: str, limit: int = 20) -> list[dict]:
         rows = conn.execute("SELECT * FROM learning_skill_cases WHERE name = ? "
                             "ORDER BY id DESC LIMIT ?", (name, limit)).fetchall()
     return [{**dict(r), "kwargs": json.loads(r["kwargs"])} for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Trades studied from MegaEmpire's bots (empire.py)
+# ---------------------------------------------------------------------------
+
+def add_trades(trades) -> int:
+    """Insert, ignoring any already seen. Returns how many were new."""
+    rows = [(t.key, t.ts, t.bot, t.strategy, t.regime, t.symbol, t.pnl_R, t.window)
+            for t in trades]
+    if not rows:
+        return 0
+    with closing(_connect()) as conn, conn:
+        before = conn.total_changes
+        conn.executemany("INSERT OR IGNORE INTO learning_trades (key, ts, bot, strategy, "
+                         "regime, symbol, pnl_R, session) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+        return conn.total_changes - before
+
+
+def trades_since(ts: float) -> list[dict]:
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT * FROM learning_trades WHERE ts >= ? ORDER BY ts",
+                            (ts,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def trade_count() -> int:
+    with closing(_connect()) as conn:
+        return conn.execute("SELECT COUNT(*) FROM learning_trades").fetchone()[0]
+
+
+def get_cursor(path: str) -> tuple[int, int]:
+    with closing(_connect()) as conn:
+        row = conn.execute("SELECT offset, size FROM learning_cursors WHERE path = ?",
+                           (path,)).fetchone()
+    return (row["offset"], row["size"]) if row else (0, 0)
+
+
+def set_cursor(path: str, offset: int, size: int) -> None:
+    with closing(_connect()) as conn, conn:
+        conn.execute("INSERT INTO learning_cursors (path, offset, size) VALUES (?, ?, ?) "
+                     "ON CONFLICT(path) DO UPDATE SET offset = excluded.offset, "
+                     "size = excluded.size", (path, offset, size))

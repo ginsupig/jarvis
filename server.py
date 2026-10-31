@@ -82,6 +82,7 @@ import web_auth
 from run_executor import RunExecutor
 import data_paths
 import dialog
+import empire
 import jarvis_memory
 import learning
 import learning_store
@@ -6425,9 +6426,11 @@ async def tool_learning_status(args: dict) -> str:
         lines.append(f"waiting — lesson {lesson['id']} [{lesson['scope']}]{flag}: "
                      f"{lesson['title']}")
     for lesson in status["active"][:6]:
+        record = (f"from {lesson['evidence']} trades" if lesson["scope"] == "trading"
+                  else f"{int(lesson['reliability'] * 100)}% reliable over "
+                       f"{lesson['uses']} uses")
         lines.append(f"in use — lesson {lesson['id']} [{lesson['scope']}], "
-                     f"{int(lesson['reliability'] * 100)}% reliable over "
-                     f"{lesson['uses']} uses: {lesson['title']}")
+                     f"{record}: {lesson['title']}")
     for skill in status["skills"][:6]:
         state = (f"v{skill['active_version']} in use" if skill["active_version"]
                  else "waiting for approval")
@@ -6572,6 +6575,103 @@ TAINT_EXEMPT_TOOLS.update({
     "teach": "it writes a lesson the user dictated, it does not read",
     "learn_skill": "it starts background work and says only that it has",
     "improve_now": "it starts background work and says only that it has",
+})
+
+
+# ---------------------------------------------------------------------------
+# MegaEmpire: the trading bots JARVIS studies (empire.py). Read-only — there
+# is no tool here that can place, change or approve anything over there.
+# ---------------------------------------------------------------------------
+
+_EMPIRE_WRAP_NAME = "megaempire"
+
+
+def _r(value) -> str:
+    try:
+        return f"{float(value):+.2f}R"
+    except (TypeError, ValueError):
+        return "?"
+
+
+async def tool_empire_status(args: dict) -> str:
+    """MegaMind's live picture: regime, today's R, each bot's state."""
+    config = learning_engine.empire
+    if not config.url:
+        return ("I'm not connected to MegaEmpire's dashboard; set "
+                "JARVIS_EMPIRE_URL to MegaMind's address, usually port 8765.")
+    try:
+        snap = await empire.fetch(config, "/api/empire")
+    except empire.EmpireError as e:
+        return f"I can't reach MegaMind just now: {e}."
+    bots = snap.get("bots") if isinstance(snap.get("bots"), dict) else {}
+    accounts = snap.get("accounts") if isinstance(snap.get("accounts"), dict) else {}
+    halted = [name for name, a in accounts.items() if isinstance(a, dict) and a.get("in_halt")]
+    pending = snap.get("pending_actions") or []
+    alerts = snap.get("alerts") or []
+    head = (f"MegaEmpire: {_plain_name(snap.get('regime') or 'unknown', 'unknown')} regime, "
+            f"{_plain_name(snap.get('autonomy') or 'unknown', 'unknown')} mode, "
+            f"{_r(snap.get('total_daily_pnl_R'))} today across {len(bots)} bots, "
+            f"{snap.get('total_open_positions', 0)} positions open; "
+            f"{len(pending)} actions waiting on your approval in MegaMind, "
+            f"{len(halted)} account(s) halted.")
+    lines = []
+    for name, bot in sorted(bots.items()):
+        if not isinstance(bot, dict):
+            continue
+        flags = [f for f, on in (("in cooldown", bot.get("in_cooldown")),) if on]
+        lines.append(f"{name}: {bot.get('status', 'unknown')}, {_r(bot.get('daily_pnl_R'))} "
+                     f"today, {bot.get('trades_today', 0)} trades, "
+                     f"{bot.get('open_positions', 0)} open"
+                     + (f", {', '.join(flags)}" if flags else ""))
+    lines += [f"halted account: {name}" for name in halted]
+    lines += [f"alert: {a if isinstance(a, str) else json.dumps(a)[:200]}" for a in alerts[-5:]]
+    return head + ("\n" + _wrap_untrusted(_EMPIRE_WRAP_NAME, "\n".join(lines)) if lines else "")
+
+
+async def tool_empire_study(args: dict) -> str:
+    """What the bots' own record says about each strategy, and why."""
+    config = learning_engine.empire
+    if not config.sources:
+        return ("I have no trade logs to study; set JARVIS_EMPIRE_OUTCOMES to the "
+                "bots' outcomes.jsonl files or their folders.")
+    await asyncio.to_thread(_learning_ready)
+    study = learning_engine.last_study
+    if not study:
+        started = learning_engine.background(learning.job_key("study"),
+                                             learning_engine.study_empire())
+        return ("I'm reading the bots' trade logs now; ask me again in a moment."
+                if started else "I'm still reading the bots' trade logs.")
+    strategy_lines = [
+        f"{name}: {s['trades']} trades, {s['expectancy_R']:+.2f}R per trade, "
+        f"{s['win_rate']:.0%} won, {s['total_R']:+.1f}R in all"
+        for name, s in study["strategies"].items()]
+    lessons = await asyncio.to_thread(store_lessons_for_trading)
+    finding_lines = [f"finding {l['id']}: {l['title']} — {l['body']}"
+                     for l in lessons if l["status"] == learning_store.ACTIVE][:8]
+    hypothesis_lines = [f"waiting — lesson {l['id']}: {l['title']} — {l['body']}"
+                        for l in lessons if l["status"] == learning_store.CANDIDATE][:4]
+    head = (f"Studied {study['trades']} trades from the last {study['window_days']} days "
+            f"across {len(study['strategies'])} strategies; {study['findings']} finding(s) "
+            f"stand.")
+    body = "\n".join(strategy_lines + finding_lines + hypothesis_lines)
+    return head + ("\n" + _wrap_untrusted(_EMPIRE_WRAP_NAME, body) if body else "")
+
+
+def store_lessons_for_trading() -> list[dict]:
+    return learning_store.list_lessons(
+        status=[learning_store.ACTIVE, learning_store.CANDIDATE], scope="trading")
+
+
+TOOL_HANDLERS.update({
+    "empire_status": tool_empire_status,
+    "empire_study": tool_empire_study,
+})
+# Both READ. Neither is an acting tool: there is nothing on the MegaEmpire
+# side for them to act on. What they bring back is the bots' own logs and
+# MegaMind's state — alerts and symbols included — so both taint the turn.
+TAINTING_TOOLS.update({
+    "empire_status": "MegaEmpire's live state",
+    "empire_study": "MegaEmpire's trade record",
 })
 
 

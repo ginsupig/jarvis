@@ -87,7 +87,9 @@ function approveLesson(lesson: LearnedLesson): void {
 }
 
 function scopeLabel(scope: LearnedLesson["scope"]): string {
-  return scope === "brain" ? "how JARVIS works" : "advice for runs";
+  if (scope === "brain") return "how JARVIS works";
+  if (scope === "trading") return "the bots' trading";
+  return "advice for runs";
 }
 
 function lessonRow(lesson: LearnedLesson, waiting: boolean): HTMLElement {
@@ -100,9 +102,10 @@ function lessonRow(lesson: LearnedLesson, waiting: boolean): HTMLElement {
   if (lesson.risky) r.addTrail(pill("reads like an instruction", "bad"));
   if (!waiting) {
     const uses = lesson.uses === 1 ? "1 use" : `${lesson.uses} uses`;
-    r.addMeta(lesson.scope === "runs"
-      ? `${Math.round(lesson.reliability * 100)}% over ${uses}` : "in every conversation",
-      { cls: "learning-row-record" });
+    const record = lesson.scope === "runs"
+      ? `${Math.round(lesson.reliability * 100)}% over ${uses}`
+      : lesson.scope === "trading" ? "from the record" : "in every conversation";
+    r.addMeta(record, { cls: "learning-row-record" });
   }
   if (waiting) {
     r.addTrail(button("Approve", () => approveLesson(lesson), { tone: "ok" }));
@@ -157,6 +160,13 @@ function paintState(snap: LearningSnapshot): void {
   facts.add("Experiences", `${snap.experiences.success ?? 0} succeeded · ${failures} failed` +
                            (pending ? ` · ${pending} not yet reflected on` : ""),
             pending && !llm.enabled ? "warn" : undefined);
+  const empire = snap.empire;
+  if (empire?.configured) {
+    const last = empire.last_study;
+    facts.add("MegaEmpire", last
+      ? `${empire.trades_studied} trades studied · ${last.findings} finding(s) · read-only`
+      : "connected, not studied yet · read-only");
+  }
   if (snap.busy.length) facts.add("Working on", snap.busy.join(", "), "accent");
   holder.replaceChildren(facts.root);
 }

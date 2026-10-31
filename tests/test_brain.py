@@ -74,6 +74,7 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__retire_learning,mcp__jarvis__teach,"
         "mcp__jarvis__evaluate_code,mcp__jarvis__learn_skill,"
         "mcp__jarvis__run_skill,mcp__jarvis__improve_now,"
+        "mcp__jarvis__empire_status,mcp__jarvis__empire_study,"
         # The CLI's own two, and the only built-ins here: without them JARVIS
         # can read a page he was given the address of and find nothing.
         "WebSearch,WebFetch")
