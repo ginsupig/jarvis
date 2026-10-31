@@ -533,3 +533,71 @@ async def test_a_skill_in_use_with_a_better_version_waiting_appears_in_both_list
         await page.locator("#learning-pending-list button", has_text="Approve v2").click()
         await page.locator("#learning-said").wait_for(state="visible", timeout=WAIT_MS)
     assert ("/api/learning/approve", {"ref": "format_duration"}) in api.posted
+
+
+# ── learning: is it working? (the control group's curve) ────────────────────
+
+from tests.dashboard_page import learning_curve_report  # noqa: E402
+
+
+def _helping_report():
+    weeks = [(0, 0, 0, 0)] * 6 + [(6, 8, 3, 4), (7, 9, 2, 3), (0, 0, 0, 0),
+                                  (8, 10, 3, 5), (9, 10, 2, 4), (10, 12, 3, 5)]
+    overall = {"treated": {"runs": 49, "succeeded": 40, "rate": 40 / 49},
+               "holdout": {"runs": 21, "succeeded": 13, "rate": 13 / 21},
+               "lift": 0.2, "low": 0.02, "high": 0.38, "verdict": "helping", "needed": 0}
+    return learning_curve_report(weeks, overall, said="My lessons are helping: 82% "
+                                 "of runs with lessons succeeded against 62% without.")
+
+
+async def test_the_curve_says_the_verdict_and_draws_both_lines_with_a_gap():
+    api = quiet_machine()
+    api.json("/api/learning/curve", _helping_report())
+    async with dashboard(api) as page:
+        await _open_learning(page)
+        verdict = page.locator(".curve-verdict")
+        await verdict.wait_for(timeout=WAIT_MS)
+        assert (await verdict.inner_text()).startswith("My lessons are helping")
+        assert "+20 points" in await page.locator(".curve-stats").inner_text()
+        # A week with no runs breaks the line into two pieces: one path, two
+        # "M" moves, and no dot for that week.
+        for cls in ("curve-line--treated", "curve-line--holdout"):
+            d = await page.locator(f"path.{cls}").get_attribute("d")
+            assert d.count("M") == 2, (cls, d)
+            assert await page.locator(f"circle.{cls}").count() == 5
+        assert await page.locator(".curve-direct").count() == 2
+
+
+async def test_hovering_a_week_shows_its_numbers():
+    api = quiet_machine()
+    api.json("/api/learning/curve", _helping_report())
+    async with dashboard(api) as page:
+        await _open_learning(page)
+        await page.locator(".curve-hit").nth(11).hover()
+        tip = page.locator(".curve-tip")
+        await tip.wait_for(state="visible", timeout=WAIT_MS)
+        text = await tip.inner_text()
+        assert "With lessons: 83% of 12" in text and "Held back: 60% of 5" in text
+
+
+async def test_too_little_data_says_so_and_the_table_is_there():
+    api = quiet_machine()
+    async with dashboard(api) as page:
+        await _open_learning(page)
+        verdict = page.locator(".curve-verdict")
+        await verdict.wait_for(timeout=WAIT_MS)
+        assert (await verdict.inner_text()).startswith("Too early")
+        assert "runs still needed" in (await page.locator(".curve-stats").inner_text()).lower()
+        assert await page.locator("path.curve-line").count() == 0
+        await page.locator(".curve-table summary").click()
+        assert await page.locator(".curve-table tr").count() == 13   # header + 12 weeks
+
+
+async def test_a_failed_curve_fetch_leaves_the_rest_of_the_tab_alone():
+    api = quiet_machine()
+    api.fails("/api/learning/curve")
+    async with dashboard(api) as page:
+        await _open_learning(page)
+        holder = page.locator("#learning-curve")
+        await holder.get_by_text("Cannot read the learning curve").wait_for(timeout=WAIT_MS)
+        assert await page.locator("#learning-state").inner_text() != ""

@@ -155,6 +155,10 @@ arbitrary LLM and file content, so everything goes through
   write and improve skills. Writes `LESSONS.md` (active brain lessons only),
   and hands brain lessons approved mid-generation to the next user turn as a
   framed note, since `@LESSONS.md` is only read when the brain starts
+- `learning_curve.py` — Is the learning working? Pure: the control group's
+  treated-vs-held-back success rates, their difference with a 95% interval,
+  a verdict that waits for 20 decided runs per arm, and the weekly curve
+  behind the Learning tab's "Is It Working?" panel (`/api/learning/curve`)
 - `empire.py` — MegaEmpire, read-only: MegaMind's dashboard (`/api/empire`)
   and the bots' `outcomes.jsonl`, read incrementally; per-strategy stats and
   the "findings" (`trading` lessons) learning.py keeps current and retires
@@ -206,6 +210,9 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   lessons on trial without approval, and adopt improved versions of approved
   skills that pass their full suite and gain no new module. Brain lessons and
   new skills always wait for the user
+- `JARVIS_LEARNING_HOLDOUT` (optional, default 0.2, max 0.5) — the control
+  group: the share of runs with relevant lessons that are sent without them,
+  at random, so `learning_curve.py` can measure whether lessons help. 0 = off
 - `JARVIS_EMPIRE_URL` / `JARVIS_EMPIRE_OUTCOMES` / `JARVIS_EMPIRE_STUDY_MIN`
   (optional) — MegaEmpire's dashboard, its bots' outcome logs (comma
   separated, `name=path` allowed), and how often to re-read them (default 15

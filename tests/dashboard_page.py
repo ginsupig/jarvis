@@ -245,6 +245,7 @@ def quiet_machine() -> Api:
     api.json("/api/projects/view", {"projects": [], "taken_at": 0.0})
     api.json("/api/specs", {"projects": []})
     api.json("/api/learning", learning_snapshot())
+    api.json("/api/learning/curve", learning_curve_report())
     api.json("/api/usage/sessions", {
         "measured": False, "scanned_at": 0.0, "active_within_sec": 90.0,
         "roots": [], "files": 0, "bytes_read": 0,
@@ -267,6 +268,29 @@ def learning_snapshot(pending=(), active=(), skills=(), enabled=True) -> dict:
         "pending": pending, "active": active, "skills": list(skills),
         "busy": [], "activity": [],
     }
+
+
+def _arm(ok: int, n: int) -> dict:
+    return {"runs": n, "succeeded": ok, "rate": (ok / n) if n else None}
+
+
+def learning_curve_report(weeks=None, overall=None, holdout_rate=0.2,
+                          said="Too early to tell whether my lessons help.") -> dict:
+    """`/api/learning/curve` as learning_curve.curve() shapes it. `weeks` is a
+    list of (treated_ok, treated_n, holdout_ok, holdout_n), oldest first."""
+    weeks = weeks or [(0, 0, 0, 0)] * 12
+    rows = []
+    for i, (tok, tn, hok, hn) in enumerate(weeks):
+        rows.append({"week": f"2026-{8 + i // 4:02d}-{1 + (i % 4) * 7:02d}",
+                     "treated": _arm(tok, tn), "holdout": _arm(hok, hn),
+                     "none": _arm(0, 0), "skill_calls": {"calls": 0, "succeeded": 0,
+                                                         "rate": None},
+                     "learned": i % 3, "retired": 0})
+    return {"holdout_rate": holdout_rate, "min_per_arm": 20,
+            "overall": overall or {"treated": _arm(0, 0), "holdout": _arm(0, 0),
+                                   "lift": None, "low": None, "high": None,
+                                   "verdict": "not_enough_data", "needed": 40},
+            "no_lessons": _arm(0, 0), "weeks": rows, "said": said}
 
 
 def lesson(lesson_id: int = 1, title: str = "Run the tests first",

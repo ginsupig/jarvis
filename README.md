@@ -304,6 +304,15 @@ Approve / Retire button on each. A lesson about how he works that you approve
 mid-conversation reaches him on your next sentence, not at his next context
 reset.
 
+**Is it working?** A lesson can look useful just by riding along with work
+that would have gone well anyway, so JARVIS keeps a control group: about one
+in five runs that have relevant lessons are sent *without* them, at random
+(`JARVIS_LEARNING_HOLDOUT`, default 0.2). The Learning tab's **Is It
+Working?** panel charts both groups' success rates week by week, with the
+difference and its 95% range, and gives a verdict — helping, no measurable
+effect, or hurting — once each group has 20 finished runs. Ask him "is your
+learning working?" and he says the same sentence.
+
 **Studying MegaEmpire.** Point JARVIS at MegaEmpire's trading bots and he
 studies their record, read-only:
 

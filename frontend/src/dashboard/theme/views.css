@@ -622,3 +622,39 @@
 .learning-row-record { --w: 150px; }
 .learning-activity { font-family: var(--font-mono); font-size: var(--fs-base);
                      color: var(--text-dim); }
+
+/* ── Learning: is it working? (curve.ts) ──────────────────────────────────── */
+.curve-verdict { font-size: var(--fs-base); color: var(--text); margin-bottom: var(--sp-3); }
+.curve-stats { display: flex; flex-wrap: wrap; gap: var(--sp-3) calc(var(--sp-3) * 2);
+               margin-bottom: var(--sp-3); }
+.curve-note { font-size: var(--fs-base); color: var(--text-dim); margin: var(--sp-3) 0; }
+.curve-chart { position: relative; }
+.curve-legend { display: flex; gap: var(--sp-3); font-size: var(--fs-base);
+                color: var(--text-dim); margin-bottom: 6px; }
+.curve-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.curve-swatch { width: 18px; height: 0; border-top: 2px solid var(--series-1); }
+.curve-swatch.curve-line--holdout { border-top: 2px dashed var(--series-2); }
+.curve-svg { width: 100%; height: auto; display: block; }
+.curve-grid { stroke: var(--edge); stroke-width: 1; }
+.curve-axis { fill: var(--text-faint); font-size: 11px; font-family: var(--font-mono); }
+.curve-direct { fill: var(--text-dim); font-size: 12px; }
+.curve-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.curve-line.curve-line--treated { stroke: var(--series-1); }
+.curve-line.curve-line--holdout { stroke: var(--series-2); stroke-dasharray: 6 4; }
+.curve-dot { stroke: var(--ground); stroke-width: 2; }
+.curve-dot.curve-line--treated { fill: var(--series-1); }
+.curve-dot.curve-line--holdout { fill: var(--series-2); }
+.curve-cross { stroke: var(--edge-strong); stroke-width: 1; }
+.curve-hit { fill: transparent; cursor: crosshair; }
+.curve-tip { position: absolute; top: 28px; transform: translateX(14px); pointer-events: none;
+             background: var(--ground-lift); border: 1px solid var(--edge-strong);
+             padding: 6px 8px; font-size: var(--fs-base); color: var(--text);
+             white-space: nowrap; z-index: 2; }
+.curve-tip--left { transform: translateX(calc(-100% - 14px)); }
+.curve-tip-head { color: var(--text-dim); margin-bottom: 2px; }
+.curve-table summary { cursor: pointer; font-size: var(--fs-base); color: var(--text-dim); }
+.curve-table table { width: 100%; border-collapse: collapse; margin-top: 6px;
+                     font-size: var(--fs-base); }
+.curve-table th, .curve-table td { text-align: left; padding: 3px 8px 3px 0;
+                                   border-bottom: 1px solid var(--edge); }
+.curve-table th { color: var(--text-dim); font-weight: normal; }
