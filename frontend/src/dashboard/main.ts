@@ -18,6 +18,7 @@ import { initProjects, refreshProjects } from "./projects";
 import { initSpecs, refreshSpecs } from "./specs";
 import { initUsage, refreshUsageView } from "./usage";
 import { initMarket, refreshMarketView } from "./market";
+import { initDebate, refreshDebateView } from "./debate";
 import {
   el, row, readout, bar, pill, setTone, statusDot, statusPill, stateStyle,
   emptyState, flash,
@@ -465,6 +466,7 @@ function setupTabs(): void {
     specs: document.getElementById("specs-view"),
     usage: document.getElementById("usage-view"),
     market: document.getElementById("market-view"),
+    debate: document.getElementById("debate-view"),
   };
   for (const tab of tabs) {
     tab.addEventListener("click", () => {
@@ -492,6 +494,7 @@ function setupTabs(): void {
       // would be up to a minute stale at the moment they are looked at.
       if (view === "usage") void refreshUsageView();
       if (view === "market") void refreshMarketView();
+      if (view === "debate") void refreshDebateView();
     });
   }
 }
@@ -518,6 +521,8 @@ document.addEventListener("DOMContentLoaded", () => {
   initUsage();
   // The market study runs on its own schedule; the view polls it.
   initMarket();
+  // So is the tournament, once a day after the close.
+  initDebate();
 
   connectLive({
     onReconcile: () => void reconcile(),

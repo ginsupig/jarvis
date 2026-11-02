@@ -680,6 +680,21 @@ EXEMPT = {
     "market.compose_brief": _MARKET_NUMBERS,
     "market.describe_regime": _MARKET_NUMBERS,
     "server.tool_market_brief": _MARKET_NUMBERS,
+    # The hypothesis tournament. `name`, `status` and `reason` are columns of
+    # its own debate_hypotheses table; a name is held to debate.NAME_RE before
+    # it is stored, a status and reason are words debate.py and market.py chose.
+    "debate._comparables": (
+        "it reads a hypothesis row's id, name and spec to build cache keys and "
+        "compiled rules; nothing it reads is printed"),
+    "debate.context_text": (
+        "it builds text for the tournament players, which only PROPOSE: names "
+        "are held to debate.NAME_RE, verdicts are market.py's words, and the "
+        "one free-text field from a model (the critic's objection) is in a "
+        "`debate._fence` block; every answer is parsed by `parse_spec` or the "
+        "critique checks before anything uses it"),
+    "debate.describe_round": (
+        "it says hypothesis names held to debate.NAME_RE, statuses market.py "
+        "and debate.py chose, and problem notes debate.py wrote; no model text"),
 }
 
 

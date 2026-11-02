@@ -81,6 +81,9 @@ SITES = _system_prompt_sites()
 # generation, so every non-literal in it is driven below.
 DRIVEN_SITES = {
     "brain.command": "brain.Brain.launch_prompt",
+    # A tool-less, one-shot player; its system prompt is debate.RULES, a
+    # constant (tests/test_debate.py::test_the_system_prompt_is_a_constant).
+    "debate.claude_asker": "debate.RULES",
 }
 
 

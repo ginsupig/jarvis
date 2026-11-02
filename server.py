@@ -98,6 +98,7 @@ import jarvis_memory
 import learning
 import learning_store
 import fleet
+import debate
 import market
 import notifier
 import sandbox
@@ -1878,6 +1879,10 @@ async def lifespan(application: FastAPI):
         if fleet.watch_enabled():
             _background.add(task := asyncio.create_task(_fleet_watch_loop(), name="fleet-watch"))
             task.add_done_callback(_background.discard)
+        try:
+            await debate_tournament.start()
+        except Exception:
+            log.warning("hypothesis tournament did not start", exc_info=True)
 
     await start_brain_and_speech()
     await start_session_watcher()
@@ -1898,6 +1903,7 @@ async def lifespan(application: FastAPI):
         unsubscribe(learning_engine.on_run_message)
     await learning_engine.stop()
     await market_engine.stop()
+    await debate_tournament.stop()
 
 
 # The interactive OpenAPI console is a "Try it out" button on every route
@@ -6887,6 +6893,68 @@ TAINT_EXEMPT_TOOLS.update({
         "bot names held to fleet.NAME_RE, symbols to market.SYMBOL_RE; no log text"),
     "fleet_fix": "it starts background work and says only that it has",
 })
+
+
+# The hypothesis tournament: Claude and the local model propose market
+# rules and critique each other's; market.py's test decides. debate.py
+# holds the rules, the test and the scorecard; nothing a model writes runs.
+
+debate_tournament = debate.Tournament()
+
+
+async def tool_debate_scorecard(args: dict) -> str:
+    """Each model's record in the tournament, as sentences debate.py wrote
+    from counts; hypothesis names are held to debate.NAME_RE."""
+    await asyncio.to_thread(debate.init_db)
+    return await asyncio.to_thread(debate.describe)
+
+
+async def tool_debate_round(args: dict) -> str:
+    if not debate.enabled():
+        return "The tournament is switched off (JARVIS_DEBATE=0)."
+    if debate_tournament.busy:
+        return "A tournament round is already running."
+    _background.add(task := asyncio.create_task(_debate_round_quietly()))
+    task.add_done_callback(_background.discard)
+    return "Starting a tournament round; I'll post the results when it's tested."
+
+
+async def _debate_round_quietly() -> None:
+    try:
+        line = debate.describe_round(await debate_tournament.run_round())
+    except Exception:
+        log.warning("tournament round failed", exc_info=True)
+        return
+    try:
+        if notifier.available():
+            await notifier.notify("JARVIS", line, subtitle="Hypothesis tournament")
+    except Exception:
+        log.warning("tournament notification failed", exc_info=True)
+
+
+TOOL_HANDLERS.update({
+    "debate_scorecard": tool_debate_scorecard,
+    "debate_round": tool_debate_round,
+})
+# A round spends Claude usage on the user's subscription.
+ACTING_TOOLS.update({"debate_round"})
+TAINT_EXEMPT_TOOLS.update({
+    "debate_scorecard": (
+        "it reports counts and Brier scores debate.py computed, in sentences it "
+        "wrote; the only model-written strings are hypothesis names, held to "
+        "debate.NAME_RE (lowercase snake_case)"),
+    "debate_round": "it starts background work and says only that it has",
+})
+
+
+@app.get("/api/debate")
+async def api_debate():
+    return await asyncio.to_thread(debate_tournament.status)
+
+
+@app.post("/api/debate/round")
+async def api_debate_round():
+    return {"said": await tool_debate_round({})}
 
 
 @app.get("/api/market")

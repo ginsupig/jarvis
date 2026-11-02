@@ -695,3 +695,45 @@ export async function changeWatchlist(
   if (!res.ok) throw new ApiError(res.status, "/api/market/watchlist");
   return res.json();
 }
+
+/**
+ * The hypothesis tournament (`/api/debate`): Claude and the local model
+ * propose rules, critique each other's, and market.py's test decides.
+ * Scores are computed by debate.py; null means "not resolved yet".
+ */
+export interface DebateHistoryPoint {
+  round: number; proposed: number; confirmed: number;
+  survival: number | null; brier_own: number | null; brier_critic: number | null;
+}
+
+export interface DebateCard {
+  proposed: number; invalid: number; duplicates: number; tested: number;
+  testing: number; confirmed: number; retired: number; rejected: number;
+  survival: number | null; brier_own: number | null; critiques: number;
+  brier_critic: number | null; forward_signals: number; forward_mean: number | null;
+  history: DebateHistoryPoint[];
+}
+
+export interface DebateHypothesis {
+  id: number; round: number; proposer: string; name: string; statement: string;
+  rule: string; confidence: number | null; status: string; reason: string;
+  stats: { discovery?: MarketStat; holdout?: MarketStat; live?: MarketStat; events?: number };
+  bar: number | null;
+  critique: { critic: string; p_pass: number; flaw: string; objection: string } | null;
+}
+
+export interface DebateStatus {
+  enabled: boolean; running: boolean; busy: boolean;
+  last_round: number | null; last_error: string; players: string[];
+  tests_so_far: number; next_bar: number;
+  scorecard: { claude?: DebateCard; local?: DebateCard; reference_brier?: number };
+  hypotheses: DebateHypothesis[];
+}
+
+export async function getDebate(): Promise<DebateStatus> {
+  return get<DebateStatus>("/api/debate");
+}
+
+export async function startDebateRound(): Promise<void> {
+  await fetch("/api/debate/round", { method: "POST" });
+}

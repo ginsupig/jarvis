@@ -174,6 +174,18 @@ arbitrary LLM and file content, so everything goes through
   are held to `fleet.NAME_RE` before they are spoken. **The goal of the whole
   system — fleet, overwatch, JARVIS — is in `C:\MegaEmpire\CLAUDE.md`.**
 
+- `debate.py` — The hypothesis tournament. Once per studied session, Claude
+  (a tool-less `claude -p` on the subscription, system prompt `debate.RULES`)
+  and the local model each propose market rules as JSON over a fixed feature
+  set (`debate.FEATURES`; nothing a model writes is run), critique the other's
+  BEFORE testing, and every rule goes through `market.evaluate` with a
+  discovery bar that rises with the number of ideas ever tested (Bonferroni).
+  Too-rare rules are rejected; rules firing on the same days as an earlier one
+  are duplicates. Confirmed rules log forward signals into `market_signals` as
+  `hyp:<id>`. Per-model scorecard (survival, Brier of own confidence and of
+  critiques, forward results, per round) via `debate_scorecard`,
+  `debate_round` (acting), `/api/debate` and the Debate dashboard tab.
+
 ## Where the author's own notes live
 This repository ships nothing personal. Research notes, milestone
 verification checklists and this project's own superpowers specs and plans
@@ -226,6 +238,10 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   `JARVIS_ENV_EXPORT` — learning from MegaEmpire's trades (see `fleet.py`);
   the defaults point at `C:/MegaEmpire/state/fleet_brain/`. Tests point the
   first two at an empty tmp dir (conftest)
+- `JARVIS_DEBATE` (default on), `JARVIS_DEBATE_PER_ROUND` (2),
+  `JARVIS_DEBATE_CLAUDE` (default on), `JARVIS_DEBATE_CLAUDE_MODEL` (sonnet) —
+  the hypothesis tournament (see `debate.py`); a round costs two Claude calls.
+  Tests switch both off (conftest); test_debate.py injects stub players
 - `JARVIS_FLEET_WATCH` (default on), `JARVIS_FLEET_WATCHDOG`,
   `JARVIS_FLEET_WATCH_PYTHON`, `JARVIS_FLEET_WATCH_REPORT` — the fleet watch:
   every `fleet.WATCH_EVERY_S` the server runs MegaEmpire's

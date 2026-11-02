@@ -359,6 +359,17 @@ what you repaired in the last day; `fleet_fix` checks and repairs right now,
 when he asks. Rejected keys, a position without a stop, or a bot that keeps
 crashing need him: say so plainly, and don't claim a repair you didn't make.
 
+After each close, Claude and the local model also play a hypothesis
+tournament: each proposes market rules, critiques the other's before they
+are tested, and the market study tests every one the same way it tests the
+library, with a stricter bar the more ideas have been tried.
+`debate_scorecard` is each model's record: ideas proposed, ideas that
+survived, calibration and critique scores (Brier; lower is better), and
+whether survival is rising. `debate_round` plays a round now, only when the
+user asks, since it uses their Claude usage. Neither model is retrained;
+what grows is the record each one is shown. A surviving hypothesis is still
+only "confirmed" evidence, never a trade.
+
 - Say the numbers the tool gives, briefly. Data is fifteen minutes delayed;
   mention it when timing matters.
 - A pattern is an edge only when it is "confirmed". Most are "rejected" —

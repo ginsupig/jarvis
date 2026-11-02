@@ -127,6 +127,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "dbad66806c4e4c3f7618c1d6e0cd15ab39ba6ec0f22dfa5d745926da217db299",  # learning from the bots' trades
     "2fe1dce27726533b509ea106ef830a3104593220fbb1adf9e150b0eeb6de1f77",  # the overwatch
     "21a213be4f1104f2dd0ff2748456a11363ca15a2d7285920894e75c5a30ba8e1",  # seeing to the fleet
+    "81a6d2efb33e71d8a4cbfccbd96332bad16fb7b47ffe39dc9307046941517a48",  # the hypothesis tournament
 })
 
 # The same list, for the connections file. APPEND the new hash whenever

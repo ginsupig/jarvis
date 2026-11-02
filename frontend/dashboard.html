@@ -45,6 +45,8 @@
                 role="tab" aria-selected="false">Usage</button>
         <button id="tab-market" class="tab" data-view="market"
                 role="tab" aria-selected="false">Market</button>
+        <button id="tab-debate" class="tab" data-view="debate"
+                role="tab" aria-selected="false">Debate</button>
       </nav>
     </header>
 
@@ -231,6 +233,11 @@
            JARVIS's market study: regime, sectors, watchlist, alerts, and the
            patterns he re-tests after every close. Built in market.ts. -->
       <div id="market-view" class="view" hidden></div>
+
+      <!-- ── DEBATE ──────────────────────────────────────────────────────── —
+           The hypothesis tournament: Claude and the local model propose and
+           critique market rules; the market study tests them. Built in debate.ts. -->
+      <div id="debate-view" class="view" hidden></div>
     </main>
 
     <aside id="detail" class="pane brackets" hidden></aside>

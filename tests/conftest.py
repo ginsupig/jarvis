@@ -34,6 +34,14 @@ def _never_read_the_real_fleet(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _never_play_a_real_tournament(monkeypatch):
+    """A tournament round calls the real `claude` CLI. Off for every test;
+    tests/test_debate.py injects stub players and switches it on itself."""
+    monkeypatch.setenv("JARVIS_DEBATE", "0")
+    monkeypatch.setenv("JARVIS_DEBATE_CLAUDE", "0")
+
+
+@pytest.fixture(autouse=True)
 def _never_post_a_real_notification(monkeypatch, request):
     """No test may spam the developer's Notification Centre.
 

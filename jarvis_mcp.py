@@ -883,6 +883,25 @@ TOOL_SPECS = [
             "pass. Background work; say you are on it and end your turn."),
         "inputSchema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "debate_scorecard",
+        "description": (
+            "The hypothesis tournament between Claude and the local model: how many "
+            "market hypotheses each proposed, how many survived the market study's "
+            "test, how well calibrated each was (Brier, lower is better), how good "
+            "its critiques of the other were, and whether that is improving. Use it "
+            "for 'how is the debate going', 'who is winning', 'is the local model "
+            "learning'."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "debate_round",
+        "description": (
+            "Play a tournament round now: both models propose hypotheses, critique "
+            "each other's, and every one is tested. It uses the user's Claude usage, "
+            "so only when asked. Background work; say you are on it and end your turn."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
 ]
 
 # Tools this machine cannot perform on Windows, left out of what the brain is
