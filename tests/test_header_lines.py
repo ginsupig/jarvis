@@ -401,6 +401,11 @@ _MARKET_NUMBERS = (
     "computed from price bars, a ticker held to `market.SYMBOL_RE`, or a word "
     "market.py chose itself (a pattern status, 'open'/'done', its own regime "
     "sentence)")
+_FLEET_ROWS = (
+    "it reads the fleet brain's outcomes table, never a session or run: bot and "
+    "strategy names pass fleet.clean (NAME_RE, lowercase letters, digits and "
+    "underscores, else dropped), symbols market.normalise_symbol, and the rest "
+    "are numbers and regime words market.py chose")
 EXEMPT = {
     "learning._activate": _LEARNING_ROW,
     "learning._lesson_summary": _LEARNING_ROW,
@@ -671,6 +676,7 @@ EXEMPT = {
     # The market study. `status`, `state` and `summary` are keys of its own
     # dicts — a pattern's verdict, the session's open/done, the regime
     # sentence — which share a name with session fields and nothing else.
+    "fleet.sync": _FLEET_ROWS,
     "market.compose_brief": _MARKET_NUMBERS,
     "market.describe_regime": _MARKET_NUMBERS,
     "server.tool_market_brief": _MARKET_NUMBERS,

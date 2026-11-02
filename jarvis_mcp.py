@@ -844,6 +844,39 @@ TOOL_SPECS = [
         },
     },
     {
+        "name": "market_fleet",
+        "description": (
+            "What the user's paper-trading bots (the MegaEmpire fleet) have shown "
+            "from their completed trades: per bot, per strategy, and per strategy in "
+            "each kind of market, with a verdict once there is enough evidence. "
+            "Use it for 'how are my bots doing', 'is aegis working', 'which "
+            "strategies are winning'. `bot` narrows it to one bot."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"bot": {"type": "string",
+                                   "description": "A bot name, e.g. 'aegis'. Omit for all."}},
+        },
+    },
+    {
+        "name": "fleet_health",
+        "description": (
+            "Whether the user's paper-trading fleet is running properly right now: "
+            "the supervisor, every bot, the overwatch, the accounts' keys and stops, "
+            "and what you repaired on your own in the last day. You check it every "
+            "few minutes yourself. Use it for 'is everything running', 'any problems "
+            "with the bots', 'what did you fix'."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "fleet_fix",
+        "description": (
+            "Check the fleet now and repair what can be repaired: restart a dead or "
+            "hung supervisor or bot, a stopped task, re-run the startup check. It "
+            "never touches an order. Only when the user asks; background work, so "
+            "say you are on it and end your turn."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "market_refresh",
         "description": (
             "Re-run the market study now instead of waiting for the next scheduled "

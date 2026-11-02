@@ -14,10 +14,23 @@ def _never_spawn_a_real_brain(monkeypatch):
 @pytest.fixture(autouse=True)
 def _never_study_the_real_market(monkeypatch):
     """server.lifespan starts the market study, which calls Alpaca. No test
-    may reach the network, and the developer's .env may hold real keys."""
+    may reach the network, and the developer's .env may hold real keys.
+    Set empty rather than deleted: server.py loads .env with `setdefault` at
+    import, so a deleted key comes back the first time a test imports it."""
     monkeypatch.setenv("JARVIS_MARKET_AUTOSTART", "0")
-    monkeypatch.delenv("APCA_API_KEY_ID", raising=False)
-    monkeypatch.delenv("APCA_API_SECRET_KEY", raising=False)
+    monkeypatch.setenv("APCA_API_KEY_ID", "")
+    monkeypatch.setenv("APCA_API_SECRET_KEY", "")
+
+
+@pytest.fixture(autouse=True)
+def _never_read_the_real_fleet(monkeypatch, tmp_path):
+    """The market tick learns from MegaEmpire's trade database. No test may
+    read the real one; a test that wants a fleet builds one in tmp_path."""
+    monkeypatch.setenv("JARVIS_FLEET_DB", str(tmp_path / "fleet" / "learning.sqlite3"))
+    monkeypatch.setenv("JARVIS_FLEET_ALLOCATION", str(tmp_path / "fleet" / "allocation.json"))
+    # Nor run the real watchdog, which restarts processes.
+    monkeypatch.setenv("JARVIS_FLEET_WATCHDOG", str(tmp_path / "fleet" / "no_watchdog.py"))
+    monkeypatch.setenv("JARVIS_FLEET_WATCH_REPORT", str(tmp_path / "fleet" / "watch_report.json"))
 
 
 @pytest.fixture(autouse=True)

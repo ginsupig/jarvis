@@ -97,6 +97,7 @@ import dialog
 import jarvis_memory
 import learning
 import learning_store
+import fleet
 import market
 import notifier
 import sandbox
@@ -1874,6 +1875,9 @@ async def lifespan(application: FastAPI):
             await market_engine.start()
         except Exception:
             log.warning("market study did not start", exc_info=True)
+        if fleet.watch_enabled():
+            _background.add(task := asyncio.create_task(_fleet_watch_loop(), name="fleet-watch"))
+            task.add_done_callback(_background.discard)
 
     await start_brain_and_speech()
     await start_session_watcher()
@@ -6789,20 +6793,99 @@ async def _market_refresh_quietly() -> None:
         log.warning("market refresh failed", exc_info=True)
 
 
+async def tool_market_fleet(args: dict) -> str:
+    """What the user's paper bots' completed trades have shown, per bot,
+    strategy, and market regime. Read-only; fleet.py held every name it
+    says to fleet.NAME_RE and wrote every sentence itself."""
+    return await asyncio.to_thread(fleet.describe, fleet.clean(_plain_name(args.get("bot") or "", "")))
+
+
+# The fleet watch. MegaEmpire's watchdog checks the paper fleet and repairs
+# what it safely can (restarts only; it never touches an order). JARVIS runs
+# it on a timer, so the fleet is seen to without anyone asking, and posts
+# each repair and each new problem that needs the user. fleet.py composes
+# every sentence from the report's codes; nothing from a log is said.
+
+_fleet_watch_last: dict = {}
+
+
+async def _fleet_watch_once(fix: bool = True) -> list[str]:
+    global _fleet_watch_last
+    report = await asyncio.to_thread(fleet.run_watch, fix)
+    if not report:
+        return []
+    news = fleet.watch_news(_fleet_watch_last, report)
+    _fleet_watch_last = report
+    for line in news:
+        try:
+            if notifier.available():
+                await notifier.notify("JARVIS", line, subtitle="Fleet watch")
+        except Exception:
+            log.warning("fleet watch notification failed", exc_info=True)
+    return news
+
+
+async def _fleet_watch_loop() -> None:
+    while True:
+        try:
+            await _fleet_watch_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("fleet watch failed", exc_info=True)
+        await asyncio.sleep(fleet.WATCH_EVERY_S)
+
+
+async def tool_fleet_health(args: dict) -> str:
+    """Is the fleet running properly: the watchdog's last report, as
+    sentences fleet.py wrote from its codes."""
+    return await asyncio.to_thread(fleet.health)
+
+
+async def tool_fleet_fix(args: dict) -> str:
+    if not fleet.watch_enabled():
+        return "The fleet watch is switched off (JARVIS_FLEET_WATCH=0)."
+    _background.add(task := asyncio.create_task(_fleet_watch_quietly()))
+    task.add_done_callback(_background.discard)
+    return "Checking the fleet now and repairing what I can; I'll post what I find."
+
+
+async def _fleet_watch_quietly() -> None:
+    try:
+        if not await _fleet_watch_once():
+            line = fleet.health().splitlines()[0]
+            if notifier.available():
+                await notifier.notify("JARVIS", line, subtitle="Fleet watch")
+    except Exception:
+        log.warning("fleet fix failed", exc_info=True)
+
+
 TOOL_HANDLERS.update({
     "market_brief": tool_market_brief,
     "market_watchlist": tool_market_watchlist,
     "market_refresh": tool_market_refresh,
+    "market_fleet": tool_market_fleet,
+    "fleet_health": tool_fleet_health,
+    "fleet_fix": tool_fleet_fix,
 })
-# Changing what he follows, or spending a burst of API calls, is the user's call.
-ACTING_TOOLS.update({"market_watchlist", "market_refresh"})
+# Changing what he follows, spending a burst of API calls, or restarting
+# the fleet on request is the user's call.
+ACTING_TOOLS.update({"market_watchlist", "market_refresh", "fleet_fix"})
 TAINT_EXEMPT_TOOLS.update({
+    "market_fleet": (
+        "it reads the fleet brain's trade table, not a session: numbers fleet.py "
+        "computed, regime words market.py chose, and bot/strategy names held to "
+        "fleet.NAME_RE (lowercase letters, digits, underscores)"),
     "market_brief": (
         "it reports numbers JARVIS computed from price bars, in sentences "
         "market.py wrote; the only foreign strings are ticker symbols, held "
         "to a letters-only pattern"),
     "market_watchlist": "it edits the watchlist and says back ticker symbols",
     "market_refresh": "it starts background work and says only that it has",
+    "fleet_health": (
+        "it reads the fleet watchdog's report as codes: sentences fleet.py wrote, "
+        "bot names held to fleet.NAME_RE, symbols to market.SYMBOL_RE; no log text"),
+    "fleet_fix": "it starts background work and says only that it has",
 })
 
 

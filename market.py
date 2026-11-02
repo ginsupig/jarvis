@@ -896,7 +896,8 @@ def regime_view(series: dict[str, Series], views: dict[str, dict]) -> dict:
 def describe_regime(r: dict) -> str:
     if r.get("trend") == "unknown":
         return r.get("summary", "")
-    parts = [f"The market is in {'an' if r['trend'] == 'uptrend' else 'a'} {r['trend']}"]
+    parts = ["The market is mixed" if r["trend"] == "mixed" else
+             f"The market is in {'an' if r['trend'] == 'uptrend' else 'a'} {r['trend']}"]
     if r.get("spy_vs_200d") is not None:
         parts[0] += f": the S&P 500 is {abs(r['spy_vs_200d']):.1f}% " \
                     f"{'above' if r['spy_vs_200d'] >= 0 else 'below'} its 200-day average"
@@ -976,7 +977,12 @@ class MarketEngine:
     async def tick(self, force: bool = False) -> float:
         """Run whatever is due and return how long to sleep."""
         async with self._lock:
-            result = await asyncio.to_thread(self._cycle, force)
+            try:
+                result = await asyncio.to_thread(self._cycle, force)
+            finally:
+                # The bots' trades are local; learning from them must not
+                # wait on Alpaca being reachable.
+                await asyncio.to_thread(self._learn_from_fleet)
         self.last_tick = time.time()
         if result.get("notify") and self._notify is not None:
             try:
@@ -985,6 +991,17 @@ class MarketEngine:
             except Exception:
                 log.warning("market notification failed", exc_info=True)
         return result["sleep"]
+
+    @staticmethod
+    def _learn_from_fleet() -> None:
+        import fleet
+        if not fleet.enabled():
+            return
+        try:
+            fleet.sync()
+            fleet.export_view()
+        except Exception:
+            log.warning("learning from the fleet failed", exc_info=True)
 
     def _sessions(self, client: AlpacaData, today: date) -> list[Session]:
         key = today.isoformat()

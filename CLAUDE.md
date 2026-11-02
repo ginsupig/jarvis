@@ -163,6 +163,17 @@ arbitrary LLM and file content, so everything goes through
   events collapsed, forward signals scored). Surfaced as `market_brief` /
   `market_watchlist` / `market_refresh`, `/api/market`, and the Market tab
 
+- `fleet.py` — What the user's paper-trading fleet (MegaEmpire, `C:\MegaEmpire`)
+  has taught JARVIS. On every market tick (even with no Alpaca keys) it copies
+  the fleet brain's completed trades read-only into `fleet_trades`, labels each
+  with the regime the market study measured that day, and grades bots,
+  strategies and strategy-by-regime (day-clustered; "collecting" until 30
+  trades over 7 days). It also writes JARVIS's regime read to
+  `market_environment.json` for MegaEmpire's overwatch, and reads back the
+  overwatch's allocation. Surfaced as `market_fleet`. Bot and strategy names
+  are held to `fleet.NAME_RE` before they are spoken. **The goal of the whole
+  system — fleet, overwatch, JARVIS — is in `C:\MegaEmpire\CLAUDE.md`.**
+
 ## Where the author's own notes live
 This repository ships nothing personal. Research notes, milestone
 verification checklists and this project's own superpowers specs and plans
@@ -211,6 +222,17 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   while the market is open, `JARVIS_MARKET_WATCHLIST` seeds the watchlist on
   first start, and `JARVIS_MARKET_AUTOSTART=0` (every test sets it) builds
   the engine without starting its loop
+- `JARVIS_FLEET` (default on), `JARVIS_FLEET_DB`, `JARVIS_FLEET_ALLOCATION`,
+  `JARVIS_ENV_EXPORT` — learning from MegaEmpire's trades (see `fleet.py`);
+  the defaults point at `C:/MegaEmpire/state/fleet_brain/`. Tests point the
+  first two at an empty tmp dir (conftest)
+- `JARVIS_FLEET_WATCH` (default on), `JARVIS_FLEET_WATCHDOG`,
+  `JARVIS_FLEET_WATCH_PYTHON`, `JARVIS_FLEET_WATCH_REPORT` — the fleet watch:
+  every `fleet.WATCH_EVERY_S` the server runs MegaEmpire's
+  `scripts/fleet_watchdog.py --fix` (restarts only, never orders) and posts
+  each repair and each new problem needing the user; tools `fleet_health`
+  and `fleet_fix` (acting). Tests point the script at a file that doesn't
+  exist (conftest), so no test can restart anything
 - `JARVIS_LEARNING_AUTO_APPLY` (optional, default off) — put reflected run
   lessons on trial without approval, and adopt improved versions of approved
   skills that pass their full suite and gain no new module. Brain lessons and

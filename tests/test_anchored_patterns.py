@@ -271,6 +271,7 @@ SAMPLES = {
     "_CHECKBOX": "- [x] done",
     "_CONSOLE_RE": "console:0x8b05bc",
     "SKILL_NAME_RE": "parse_dates",
+    "TAG_RE": "trend:flat",
 }
 
 ALPHABET = ("abcdefghijklmnopqrstuvwxyz0123456789"
