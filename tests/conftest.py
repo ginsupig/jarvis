@@ -1,4 +1,5 @@
 import asyncio
+import sys
 
 import pytest
 import pytest_asyncio
@@ -8,6 +9,77 @@ import pytest_asyncio
 def _never_spawn_a_real_brain(monkeypatch):
     """server.lifespan builds the brain but must not start `claude` under test."""
     monkeypatch.setenv("JARVIS_BRAIN_AUTOSTART", "0")
+
+
+@pytest.fixture(autouse=True)
+def _never_study_the_real_market(monkeypatch):
+    """server.lifespan starts the market study, which calls Alpaca. No test
+    may reach the network, and the developer's .env may hold real keys.
+    Set empty rather than deleted: server.py loads .env with `setdefault` at
+    import, so a deleted key comes back the first time a test imports it."""
+    monkeypatch.setenv("JARVIS_MARKET_AUTOSTART", "0")
+    monkeypatch.setenv("APCA_API_KEY_ID", "")
+    monkeypatch.setenv("APCA_API_SECRET_KEY", "")
+    monkeypatch.setenv("JARVIS_MARKET_KEYS_FROM", "")
+
+
+@pytest.fixture(autouse=True)
+def _never_read_the_real_fleet(monkeypatch, tmp_path):
+    """The market tick learns from MegaEmpire's trade database. No test may
+    read the real one; a test that wants a fleet builds one in tmp_path."""
+    monkeypatch.setenv("JARVIS_FLEET_DB", str(tmp_path / "fleet" / "learning.sqlite3"))
+    monkeypatch.setenv("JARVIS_FLEET_ALLOCATION", str(tmp_path / "fleet" / "allocation.json"))
+    # Nor run the real watchdog, which restarts processes.
+    monkeypatch.setenv("JARVIS_FLEET_WATCHDOG", str(tmp_path / "fleet" / "no_watchdog.py"))
+    monkeypatch.setenv("JARVIS_FLEET_WATCH_REPORT", str(tmp_path / "fleet" / "watch_report.json"))
+
+
+@pytest.fixture(autouse=True)
+def _never_scan_the_real_project_roots(monkeypatch):
+    """The developer's .env may list project roots (JARVIS_PROJECT_ROOTS);
+    server.py loads it with setdefault, so the scan would walk real disks.
+    Empty means the defaults, which tests already point at tmp."""
+    monkeypatch.setenv("JARVIS_PROJECT_ROOTS", "")
+
+
+@pytest.fixture(autouse=True)
+def _never_read_a_real_account(monkeypatch, tmp_path):
+    """broker_accounts reads the fleet's real keys and the user's Webull
+    account. No test may: point the key file and roster at tmp, blank the
+    Webull keys (set, not deleted: server.py reloads .env with setdefault),
+    and drop the one-minute cache between tests."""
+    import accounts
+    monkeypatch.setenv("JARVIS_ACCOUNTS_KEYS", str(tmp_path / "accounts" / "keys.env"))
+    monkeypatch.setenv("JARVIS_ACCOUNTS_ROSTER", str(tmp_path / "accounts" / "megamind.yaml"))
+    monkeypatch.setenv("JARVIS_TRADIER_KEYS", str(tmp_path / "accounts" / "tradier.env"))
+    for name in ("WEBULL_APP_KEY", "WEBULL_APP_SECRET", "WEBULL_ACCOUNT_ID",
+                 "TRADIER_TOKEN", "TRADIER_ACCESS_TOKEN", "TRADIER_ACCOUNT_ID"):
+        monkeypatch.setenv(name, "")
+    monkeypatch.setattr(accounts, "_webull_api", None)
+    accounts._cache.clear()
+    # Nor the news wires: no Finnhub/FMP keys, and Fed/Alpaca readers off.
+    import news
+    for name in ("FINNHUB_API_KEY", "FMP_API_KEY"):
+        monkeypatch.setenv(name, "")
+    monkeypatch.setattr(news, "READERS", {})
+    news._cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _never_command_the_real_fleet(monkeypatch, tmp_path):
+    """The autopilot submits pause/resume commands through MegaEmpire's own
+    code. Off for every test, and pointed at a checkout that doesn't exist;
+    tests/test_autopilot.py drives decide() and tick() with fakes."""
+    monkeypatch.setenv("JARVIS_AUTOPILOT", "0")
+    monkeypatch.setenv("JARVIS_AUTOPILOT_ROOT", str(tmp_path / "no_megaempire"))
+
+
+@pytest.fixture(autouse=True)
+def _never_play_a_real_tournament(monkeypatch):
+    """A tournament round calls the real `claude` CLI. Off for every test;
+    tests/test_debate.py injects stub players and switches it on itself."""
+    monkeypatch.setenv("JARVIS_DEBATE", "0")
+    monkeypatch.setenv("JARVIS_DEBATE_CLAUDE", "0")
 
 
 @pytest.fixture(autouse=True)
@@ -69,6 +141,25 @@ def _never_write_to_the_live_data_dir(monkeypatch, tmp_path):
     monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "data-dir"))
 
 
+@pytest.fixture(autouse=True)
+def _never_read_the_live_session_roster(monkeypatch, tmp_path):
+    """No test may see the developer's own Claude Code sessions.
+
+    The session watcher reads `~/.claude/sessions` and `~/.claude-orcha`,
+    and a server started under TestClient starts the watcher. That passed on
+    CI only because the runner has no live sessions; on a machine running
+    Claude Code (as this suite usually is) the real ones appeared in
+    "empty roster" assertions. The defaults are pointed at empty directories
+    of the same names in tmp_path; a test that wants a roster builds one there
+    or sets its own roots.
+    """
+    import session_watch
+    home = tmp_path / "home"
+    monkeypatch.setattr(session_watch, "DEFAULT_ROOTS",
+                        (str(home / ".claude"), str(home / ".claude-orcha")))
+    monkeypatch.delenv("JARVIS_CLAUDE_CONFIG_DIRS", raising=False)
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def _no_run_left_mid_flight():
     """No test may end with a run's driver still starting its child.
@@ -115,3 +206,26 @@ async def _no_run_left_mid_flight():
         task.cancel()
     if pending:
         await asyncio.wait(pending, timeout=5)
+
+
+# Two things a test can ask of the filesystem that Windows will not do, and
+# that are skips rather than failures there:
+#   * a symlink, which needs Developer Mode or an elevated shell (1314); and
+#   * a filename holding a newline, quote or other character NTFS forbids —
+#     the "hostile filename" attacks, which cannot exist on that filesystem.
+# Narrow on purpose: any other OSError still fails the test.
+_NTFS_FORBIDDEN = set(chr(10) + chr(13) + '"<>|*?')
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_pyfunc_call(pyfuncitem):
+    try:
+        return (yield)
+    except OSError as e:
+        if sys.platform == "win32":
+            if getattr(e, "winerror", None) == 1314:
+                pytest.skip("creating a symlink needs Developer Mode on Windows")
+            names = f"{e.filename or ''}{e.filename2 or ''}"
+            if e.errno == 22 and _NTFS_FORBIDDEN & set(names):
+                pytest.skip("filename characters NTFS cannot store")
+        raise

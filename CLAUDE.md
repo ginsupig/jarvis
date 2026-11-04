@@ -53,7 +53,8 @@ this presents as "the UI is up but nothing works" rather than as an error.
   token from `data_paths.ensure_tool_token()`.
 - **Learning** (`learning.py`): a local LLM (any OpenAI-compatible server,
   `local_llm.py`) turns failed runs and broken tools into lessons, scores each
-  lesson by the outcomes of the runs it rode along with, merges lessons into
+  lesson by the outcomes of the runs it rode along with against runs in the
+  same projects without it (`learning_store.baseline`), merges lessons into
   strategies, and writes and repairs Python skills under sandboxed tests
   (`sandbox.py`). State is `learning_store.py` (SQLite, in jarvis.db).
   The local model only ever proposes: nothing it writes is used until the
@@ -145,11 +146,13 @@ arbitrary LLM and file content, so everything goes through
 - `local_llm.py` — The learning system's model: OpenAI-compatible chat over
   httpx (Ollama, LM Studio, llama.cpp, vLLM). Off unless
   `JARVIS_LOCAL_LLM_MODEL` is set
-- `sandbox.py` — Runs evaluated code and learned skills in a `python -I -S`
-  child: scrubbed env, timeout, rlimits. Makes mistakes cheap; it is NOT a
+- `sandbox.py` — Runs evaluated code and learned skills in a
+  `python -I -S -X utf8` child: scrubbed env, timeout, rlimits on POSIX and a
+  one-process Job Object on Windows. Makes mistakes cheap; it is NOT a
   wall against hostile code — the gates upstream are
 - `learning_store.py` — SQLite `learning_*` tables: experiences, lessons
-  (candidate / active / retired, with uses and outcomes), versioned skills,
+  (candidate / active / retired, with uses, outcomes and the baseline they
+  are judged against), versioned skills,
   and the failing inputs each skill must survive
 - `learning.py` — The engine: observe, reflect, apply, evaluate, consolidate,
   write and improve skills. Writes `LESSONS.md` (active brain lessons only),
@@ -159,6 +162,35 @@ arbitrary LLM and file content, so everything goes through
   and the bots' `outcomes.jsonl`, read incrementally; per-strategy stats and
   the "findings" (`trading` lessons) learning.py keeps current and retires
 - `data_paths.py` — Single source of truth for where data is written
+- `market.py` — The market study: Alpaca bars (read-only; the client has
+  no account or order method) into `market_*` tables in jarvis.db, the
+  regime / sector / watchlist analysis, alerts, and a fixed pattern library
+  re-tested after every close (discovery vs holdout, net of cost, same-day
+  events collapsed, forward signals scored). Surfaced as `market_brief` /
+  `market_watchlist` / `market_refresh`, `/api/market`, and the Market tab
+
+- `fleet.py` — What the user's paper-trading fleet (MegaEmpire, `C:\MegaEmpire`)
+  has taught JARVIS. On every market tick (even with no Alpaca keys) it copies
+  the fleet brain's completed trades read-only into `fleet_trades`, labels each
+  with the regime the market study measured that day, and grades bots,
+  strategies and strategy-by-regime (day-clustered; "collecting" until 30
+  trades over 7 days). It also writes JARVIS's regime read to
+  `market_environment.json` for MegaEmpire's overwatch, and reads back the
+  overwatch's allocation. Surfaced as `market_fleet`. Bot and strategy names
+  are held to `fleet.NAME_RE` before they are spoken. **The goal of the whole
+  system — fleet, overwatch, JARVIS — is in `C:\MegaEmpire\CLAUDE.md`.**
+
+- `debate.py` — The hypothesis tournament. Once per studied session, Claude
+  (a tool-less `claude -p` on the subscription, system prompt `debate.RULES`)
+  and the local model each propose market rules as JSON over a fixed feature
+  set (`debate.FEATURES`; nothing a model writes is run), critique the other's
+  BEFORE testing, and every rule goes through `market.evaluate` with a
+  discovery bar that rises with the number of ideas ever tested (Bonferroni).
+  Too-rare rules are rejected; rules firing on the same days as an earlier one
+  are duplicates. Confirmed rules log forward signals into `market_signals` as
+  `hyp:<id>`. Per-model scorecard (survival, Brier of own confidence and of
+  critiques, forward results, per round) via `debate_scorecard`,
+  `debate_round` (acting), `/api/debate` and the Debate dashboard tab.
 
 ## Where the author's own notes live
 This repository ships nothing personal. Research notes, milestone
@@ -202,6 +234,64 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   the local server. `JARVIS_LOCAL_LLM_URL` (default
   `http://127.0.0.1:11434/v1`), `JARVIS_LOCAL_LLM_API_KEY`,
   `JARVIS_LOCAL_LLM_TIMEOUT` (default 120s) go with it
+- `APCA_API_KEY_ID` / `APCA_API_SECRET_KEY` (optional) — Alpaca market-data
+  keys for the market study; without them it stays idle. `JARVIS_MARKET=0`
+  switches it off, `JARVIS_MARKET_INTERVAL_MIN` (default 15) is its cadence
+  while the market is open, `JARVIS_MARKET_WATCHLIST` seeds the watchlist on
+  first start, and `JARVIS_MARKET_AUTOSTART=0` (every test sets it) builds
+  the engine without starting its loop
+- `JARVIS_FLEET` (default on), `JARVIS_FLEET_DB`, `JARVIS_FLEET_ALLOCATION`,
+  `JARVIS_ENV_EXPORT` — learning from MegaEmpire's trades (see `fleet.py`);
+  the defaults point at `C:/MegaEmpire/state/fleet_brain/`. Tests point the
+  first two at an empty tmp dir (conftest)
+- `JARVIS_DEBATE` (default on), `JARVIS_DEBATE_PER_ROUND` (2),
+  `JARVIS_DEBATE_CLAUDE` (default on), `JARVIS_DEBATE_CLAUDE_MODEL` (sonnet) —
+  the hypothesis tournament (see `debate.py`); a round costs two Claude calls.
+  Tests switch both off (conftest); test_debate.py injects stub players
+- `JARVIS_FLEET_WATCH` (default on), `JARVIS_FLEET_WATCHDOG`,
+  `JARVIS_FLEET_WATCH_PYTHON`, `JARVIS_FLEET_WATCH_REPORT` — the fleet watch:
+  every `fleet.WATCH_EVERY_S` the server runs MegaEmpire's
+  `scripts/fleet_watchdog.py --fix` (restarts only, never orders) and posts
+  each repair and each new problem needing the user; tools `fleet_health`
+  and `fleet_fix` (acting). Tests point the script at a file that doesn't
+  exist (conftest), so no test can restart anything
+- `JARVIS_ACCOUNTS` (default on), `JARVIS_ACCOUNTS_KEYS`, `JARVIS_ACCOUNTS_ROSTER`,
+  `WEBULL_APP_KEY`, `WEBULL_APP_SECRET`, `WEBULL_ACCOUNT_ID`, `WEBULL_REGION` —
+  read-only brokerage accounts (see `accounts.py`): every bot holding a paper
+  slot in MegaEmpire's roster, under its key prefix in the proxy's .env, plus
+  the user's Webull account (webull-openapi-python-sdk; a new app's first
+  token is approved in the Webull app) and Tradier account (`TRADIER_TOKEN`/
+  `TRADIER_ACCOUNT_ID` here, else read from `JARVIS_TRADIER_KEYS`, default
+  C:/MOM/.env). Tool `broker_accounts`, `/api/accounts`, dashboard Accounts
+  tab. GET/account queries only; keys are never copied or said. Tests point
+  the files at tmp and blank the Webull/Tradier keys (conftest)
+- `JARVIS_MARKET_KEYS_FROM` (optional) — a fleet key prefix (e.g. `AGS_ALPACA`)
+  whose pair the market study reads in place instead of `APCA_API_KEY_ID`
+- `JARVIS_NEWS` (default on), `FINNHUB_API_KEY`, `FMP_API_KEY` (optional) —
+  `news.py`: Alpaca's news wire (market study key), the Fed's press RSS, and
+  Finnhub/FMP when keyed; tool `market_news` TAINTS (headlines are wrapped
+  untrusted). Tests empty `news.READERS` (conftest)
+- `JARVIS_AUTOPILOT` (default on), `JARVIS_AUTOPILOT_DAY_LOSS_PCT` (2.0),
+  `JARVIS_AUTOPILOT_FLEET_LOSS_PCT` (1.5), `JARVIS_AUTOPILOT_ROOT` — the
+  autopilot (`autopilot.py`): every 5 min while Alpaca's clock says open, pause
+  new paper entries for a bot down 2% on the day, for every bot at a 1.5%
+  fleet loss, or for a bot whose confirmed losing lesson matches today's trend;
+  resume its own pauses next session. Pause/resume only, via MegaEmpire's
+  `core.fleet_learning.submit_command` (audited, paper-only; exits untouched);
+  never budget caps (MegaEmpire can't clear one). State in
+  `<data dir>/autopilot.json`. Tool `fleet_autopilot`. Tests: off (conftest)
+- `JARVIS_FLEET_STUDY` (default on) — `fleet_study.py`: after each finished
+  session, a day review (fleet_reviews) and the lesson book (fleet_lessons:
+  propose at |t|>=2.5 over 15 trades/5 days, confirm on 10 forward trades/3
+  days, retire on disagreement). Tools `fleet_study`, `fleet_study_now` (acting)
+- `JARVIS_OPTIONS` (default on) — `options.py`: option chains read-only from
+  Tradier (the token beside the accounts, real time) or Alpaca's indicative
+  feed. Tool `options_study`; after each close it records SPY/QQQ/IWM and the
+  watchlist (option_days, option_moves) and scores expected moves and implied
+  against later realised vol. `trade_plan.py`: tools `trade_plan` (levels,
+  bias, entries, stop, targets, option contract or debit spread; scans the
+  followed list without a symbol) and `trade_record`; every suggestion is
+  saved to trade_ideas and scored on daily bars after the close. No orders
 - `JARVIS_LEARNING_AUTO_APPLY` (optional, default off) — put reflected run
   lessons on trial without approval, and adopt improved versions of approved
   skills that pass their full suite and gain no new module. Brain lessons and

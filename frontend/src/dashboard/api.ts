@@ -686,3 +686,164 @@ export interface UsageSessions {
 export async function getUsageSessions(): Promise<UsageSessions> {
   return get<UsageSessions>("/api/usage/sessions");
 }
+
+/**
+ * The market study (`/api/market`). Every number is computed server-side by
+ * market.py from price bars; null means "not known", never zero.
+ */
+export interface MarketSymbol {
+  symbol: string;
+  name?: string;
+  price: number;
+  change: number | null;
+  ret_5d: number | null;
+  ret_20d: number | null;
+  rs_20d: number | null;
+  trend: string;
+  vs_50d: number | null;
+  vs_200d: number | null;
+  rsi14: number | null;
+  atr_pct: number | null;
+  move_z: number | null;
+  rvol: number | null;
+  from_high: number | null;
+  from_low: number | null;
+  flags: string[];
+}
+
+export interface MarketStat { n: number; mean: number; t: number; hit: number }
+
+export interface MarketPattern {
+  name: string;
+  label: string;
+  description: string;
+  direction: number;
+  horizon: number;
+  status: "testing" | "confirmed" | "rejected" | "retired";
+  reason: string;
+  stats: { discovery?: MarketStat; holdout?: MarketStat; live?: MarketStat; events?: number; split?: string };
+  tracked_since: string | null;
+  pending_signals: number;
+}
+
+export interface MarketSnapshot {
+  as_of: string;
+  data_through: string;
+  session: { day: string; state: "open" | "done" };
+  regime: {
+    trend?: string; summary?: string; spy_vs_50d?: number | null; spy_vs_200d?: number | null;
+    breadth_50d?: number | null; breadth_200d?: number | null; vol_20d?: number | null;
+    vol_percentile?: number | null; vol_state?: string; vixy_5d?: number | null;
+  };
+  market: MarketSymbol[];
+  sectors: MarketSymbol[];
+  watchlist: MarketSymbol[];
+  missing: string[];
+  patterns: MarketPattern[];
+  setups: { pattern: string; label: string; status: string; direction: number; horizon: number; symbols: string[]; day: string }[];
+  headline: string;
+  brief: string;
+}
+
+export interface MarketStatus {
+  enabled: boolean;
+  configured: boolean;
+  running: boolean;
+  phase: string;
+  interval_min: number;
+  last_tick: number | null;
+  next_run: number | null;
+  last_error: string;
+  studied_day: string | null;
+  watchlist: string[];
+  alerts: { day: string; ts: number; symbol: string; kind: string; text: string }[];
+  snapshot: MarketSnapshot | null;
+}
+
+export async function getMarket(): Promise<MarketStatus> {
+  return get<MarketStatus>("/api/market");
+}
+
+export async function refreshMarket(): Promise<void> {
+  await fetch("/api/market/refresh", { method: "POST" });
+}
+
+export async function changeWatchlist(
+  add: string[], remove: string[],
+): Promise<{ added: string[]; removed: string[]; refused: string[]; watchlist: string[] }> {
+  const res = await fetch("/api/market/watchlist", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ add, remove }),
+  });
+  if (!res.ok) throw new ApiError(res.status, "/api/market/watchlist");
+  return res.json();
+}
+
+/**
+ * The hypothesis tournament (`/api/debate`): Claude and the local model
+ * propose rules, critique each other's, and market.py's test decides.
+ * Scores are computed by debate.py; null means "not resolved yet".
+ */
+export interface DebateHistoryPoint {
+  round: number; proposed: number; confirmed: number;
+  survival: number | null; brier_own: number | null; brier_critic: number | null;
+}
+
+export interface DebateCard {
+  proposed: number; invalid: number; duplicates: number; tested: number;
+  testing: number; confirmed: number; retired: number; rejected: number;
+  survival: number | null; brier_own: number | null; critiques: number;
+  brier_critic: number | null; forward_signals: number; forward_mean: number | null;
+  history: DebateHistoryPoint[];
+}
+
+export interface DebateHypothesis {
+  id: number; round: number; proposer: string; name: string; statement: string;
+  rule: string; confidence: number | null; status: string; reason: string;
+  stats: { discovery?: MarketStat; holdout?: MarketStat; live?: MarketStat; events?: number };
+  bar: number | null;
+  critique: { critic: string; p_pass: number; flaw: string; objection: string } | null;
+}
+
+export interface DebateStatus {
+  enabled: boolean; running: boolean; busy: boolean;
+  last_round: number | null; last_error: string; players: string[];
+  tests_so_far: number; next_bar: number;
+  scorecard: { claude?: DebateCard; local?: DebateCard; reference_brier?: number };
+  hypotheses: DebateHypothesis[];
+}
+
+export async function getDebate(): Promise<DebateStatus> {
+  return get<DebateStatus>("/api/debate");
+}
+
+export async function startDebateRound(): Promise<void> {
+  await fetch("/api/debate/round", { method: "POST" });
+}
+
+/**
+ * Brokerage accounts (`/api/accounts`), read-only: each paper bot's Alpaca
+ * account and the user's Webull account. accounts.py held every name and
+ * symbol to a pattern; null means the broker didn't say.
+ */
+export interface BrokerPosition {
+  instrument: string; qty: number | null; side: "long" | "short";
+  avg_price: number | null; price: number | null; value: number | null;
+  pl: number | null; pl_pct: number | null; stop: number | "trailing" | null;
+}
+
+export interface BrokerAccount {
+  broker: "alpaca" | "webull" | "tradier"; bot: string; slot: number | null; account: string;
+  status: "ok" | "refused" | "unreachable" | "no_key" | "no_sdk";
+  equity?: number | null; cash?: number | null; day_pl?: number | null;
+  open_orders?: number | null; positions: BrokerPosition[];
+}
+
+export interface AccountsStatus {
+  enabled: boolean; updated: number; accounts: BrokerAccount[];
+}
+
+export async function getAccounts(): Promise<AccountsStatus> {
+  return get<AccountsStatus>("/api/accounts");
+}

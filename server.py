@@ -17,12 +17,24 @@ import os
 import difflib
 import re
 import secrets
-import shlex
 import sys
 import sqlite3
 import threading
 import time
 from pathlib import Path
+
+# Windows reads text files in the ANSI code page unless Python is in UTF-8
+# mode, and a memory note, transcript or spec holding anything outside it is
+# then misread or fails to read at all. `python server.py` re-runs itself in
+# UTF-8 mode before anything else is imported; any other way of starting the
+# server is caught by preflight's `utf8_mode` check instead.
+if __name__ == "__main__" and sys.platform == "win32" and not sys.flags.utf8_mode:
+    import subprocess as _subprocess
+    try:
+        _code = _subprocess.call([sys.executable, "-X", "utf8", *sys.argv])
+    except KeyboardInterrupt:
+        _code = 130
+    sys.exit(_code)
 
 # The ONE definition of what a line of `.env` is. Both readers use it (this
 # boot loader and `_read_env`), and so does `_env_value_problem`, which is
@@ -86,6 +98,15 @@ import empire
 import jarvis_memory
 import learning
 import learning_store
+import accounts
+import autopilot
+import fleet
+import fleet_study
+import news
+import options
+import trade_plan
+import debate
+import market
 import notifier
 import sandbox
 import tts
@@ -102,6 +123,9 @@ log = logging.getLogger("jarvis")
 FISH_API_KEY = os.getenv("FISH_API_KEY", "")
 FISH_VOICE_ID = os.getenv("FISH_VOICE_ID", "612b878b113047d9a770c069c8b4fdfe")  # JARVIS (MCU)
 FISH_API_URL = "https://api.fish.audio/v1/tts"
+# No Fish key on Windows: speak with the system's own SAPI voice rather than
+# not at all. JARVIS_WINDOWS_TTS=false turns the fallback off (text only).
+WINDOWS_TTS_FALLBACK = os.getenv("JARVIS_WINDOWS_TTS", "true").lower() not in ("0", "false", "no")
 USER_NAME = os.getenv("USER_NAME", "sir")
 _SKIP_PERMISSIONS = os.getenv("JARVIS_SKIP_PERMISSIONS", "true").lower() not in ("0", "false", "no")
 
@@ -230,11 +254,11 @@ SCAN_BUDGET_SECONDS = float(os.getenv("JARVIS_SCAN_BUDGET", "20"))
 SCAN_CACHE_SECONDS = float(os.getenv("JARVIS_SCAN_CACHE", "300"))
 
 # Roots are overridable so a user whose Desktop is slow, huge or cloud-backed
-# has somewhere to point this. Colon-separated, like PATH.
+# has somewhere to point this. Separated like PATH (`:`, or `;` on Windows).
 def _scan_roots() -> list[Path]:
     override = os.getenv("JARVIS_PROJECT_ROOTS", "").strip()
     if override:
-        return [Path(r).expanduser() for r in override.split(":") if r.strip()]
+        return [Path(r).expanduser() for r in override.split(os.pathsep) if r.strip()]
     return [DESKTOP_PATH, project_maker.projects_root()]
 
 
@@ -464,9 +488,21 @@ _last_greeting_time: float = 0
 # TTS (Fish Audio)
 # ---------------------------------------------------------------------------
 
+def voice_backend() -> str:
+    """"fish", "windows", or "" when JARVIS has no voice at all."""
+    if tts.fish_key_usable(FISH_API_KEY):
+        return "fish"
+    if WINDOWS_TTS_FALLBACK and tts.windows_speech_available():
+        return "windows"
+    return ""
+
+
 async def synthesize_speech(text: str) -> Optional[bytes]:
-    """Generate speech audio from text using Fish Audio TTS."""
-    if not FISH_API_KEY:
+    """Generate speech audio from text using Fish Audio TTS, or the Windows fallback."""
+    backend = voice_backend()
+    if backend == "windows":
+        return await _synth_windows(text)
+    if backend != "fish":
         log.warning("FISH_API_KEY not set, skipping TTS")
         return None
 
@@ -508,6 +544,7 @@ speech: Optional[SpeechScheduler] = None
 session_watcher: "session_watch.SessionWatcher | None" = None
 session_clients: set = set()
 _tts_client: Optional[httpx.AsyncClient] = None
+_windows_speech: Optional[tts.WindowsSpeech] = None
 _brain_notice_at = {"restarting": 0.0}
 _bg_tasks: set[asyncio.Task] = set()
 _CONTENT_FRAMES = ("audio", "text")
@@ -614,7 +651,20 @@ async def _voice_emit(msg: dict) -> None:
         raise NoVoiceClient("no voice client connected")
 
 
+async def _synth_windows(text: str) -> Optional[bytes]:
+    global _windows_speech
+    if _windows_speech is None:
+        _windows_speech = tts.WindowsSpeech()
+    r = await _windows_speech.synthesize(text)
+    if r is None:
+        return None
+    log.debug(f"tts (windows): {len(text)} chars, total {r.total_sec:.2f}s")
+    return r.audio
+
+
 async def _synth_for_speech(text: str) -> Optional[bytes]:
+    if voice_backend() == "windows":
+        return await _synth_windows(text)
     r = await tts.synthesize_chunk(text, api_key=FISH_API_KEY, voice_id=FISH_VOICE_ID, client=_tts_client)
     if r is None:
         return None
@@ -635,7 +685,7 @@ def _fmt_reset(ts) -> str:
         when = datetime.fromtimestamp(float(ts))
     except (TypeError, ValueError, OSError, OverflowError):
         return "later"
-    clock = when.strftime("%-I:%M %p").replace(":00 ", " ")   # "10:00 AM" -> "10 AM"
+    clock = f"{when.hour % 12 or 12}:{when:%M %p}".replace(":00 ", " ")   # "10:00 AM" -> "10 AM"
     days = (when.date() - datetime.now().date()).days
     if days <= 0:
         return clock
@@ -643,7 +693,7 @@ def _fmt_reset(ts) -> str:
         return f"tomorrow at {clock}"
     if days < 7:
         return f"{when.strftime('%A')} at {clock}"
-    return f"{when.strftime('%A %-d %B')} at {clock}"
+    return f"{when:%A} {when.day} {when:%B} at {clock}"
 
 
 # True but useless: "down" names neither cause nor remedy. When the brain's
@@ -953,6 +1003,9 @@ def _active_project_names() -> list[str]:
 async def start_brain_and_speech() -> None:
     global brain_instance, speech, _tts_client
     _tts_client = httpx.AsyncClient(timeout=15.0)
+    if voice_backend() == "windows":
+        log.info(f"no Fish Audio key: speaking with the Windows voice "
+                 f"({os.getenv('JARVIS_WINDOWS_VOICE', tts.WINDOWS_VOICE_DEFAULT)})")
     speech = SpeechScheduler(lambda t: _synth_for_speech(t), _voice_emit, prepare=strip_markdown_for_tts,
                              transport_ready=lambda: bool(voice_clients))
     await speech.start()
@@ -1153,7 +1206,7 @@ async def _maybe_rotate() -> None:
 async def stop_brain_and_speech() -> None:
     """Stop the brain first (no more turns), then the mouth, then the HTTP client.
     Each step is isolated so one failure cannot leak the others."""
-    global brain_instance, speech, _tts_client
+    global brain_instance, speech, _tts_client, _windows_speech
     # A generation must never vanish without a trace. The entry is written
     # whether or not the brain was in a state to write one itself, and the
     # whole step is wrapped: journalling must never prevent shutdown.
@@ -1177,7 +1230,8 @@ async def stop_brain_and_speech() -> None:
         log.warning(f"shutdown journal failed: {e}")
     for label, coro in (("brain", brain_instance.stop() if brain_instance else None),
                         ("speech", speech.stop() if speech else None),
-                        ("tts client", _tts_client.aclose() if _tts_client else None)):
+                        ("tts client", _tts_client.aclose() if _tts_client else None),
+                        ("windows speech", _windows_speech.close() if _windows_speech else None)):
         if coro is None:
             continue
         try:
@@ -1185,6 +1239,7 @@ async def stop_brain_and_speech() -> None:
         except Exception as e:
             log.warning(f"shutdown: {label} did not stop cleanly: {e}")
     brain_instance, speech, _tts_client = None, None, None
+    _windows_speech = None
 
 
 # Completions are held and spoken together at the next pause: the user asked
@@ -1840,6 +1895,25 @@ async def lifespan(application: FastAPI):
         # Learning is an addition; it must never be the reason JARVIS is mute.
         log.warning("learning engine did not start", exc_info=True)
 
+    if market.autostart():
+        try:
+            await market_engine.start()
+        except Exception:
+            log.warning("market study did not start", exc_info=True)
+        if fleet.watch_enabled():
+            _background.add(task := asyncio.create_task(_fleet_watch_loop(), name="fleet-watch"))
+            task.add_done_callback(_background.discard)
+        if autopilot.enabled():
+            _background.add(task := asyncio.create_task(_autopilot_loop(), name="autopilot"))
+            task.add_done_callback(_background.discard)
+        if fleet_study.enabled():
+            _background.add(task := asyncio.create_task(_fleet_study_loop(), name="fleet-study"))
+            task.add_done_callback(_background.discard)
+        try:
+            await debate_tournament.start()
+        except Exception:
+            log.warning("hypothesis tournament did not start", exc_info=True)
+
     await start_brain_and_speech()
     await start_session_watcher()
     # Deliberately not awaited: every check is time-boxed to 5s, so running
@@ -1858,6 +1932,8 @@ async def lifespan(application: FastAPI):
     if unsubscribe is not None:
         unsubscribe(learning_engine.on_run_message)
     await learning_engine.stop()
+    await market_engine.stop()
+    await debate_tournament.stop()
 
 
 # The interactive OpenAPI console is a "Try it out" button on every route
@@ -2232,9 +2308,12 @@ def _specs_fingerprint() -> str:
     for project in _specs_projects():
         for doc in project["documents"]:
             progress = doc["progress"] or {}
+            # `sections` as well as the mtime: on Windows the file clock
+            # ticks every ~16 ms, so an edit that soon after the last write
+            # leaves `modified` unchanged.
             parts.append("|".join((
                 project["name"], project["path"], doc["path"],
-                f"{doc['modified']:.3f}",
+                f"{doc['modified']:.3f}", str(doc["sections"]),
                 doc["approval"]["state"],
                 f"{progress.get('done', '')}/{progress.get('total', '')}")))
     return "\n".join(parts)
@@ -2390,6 +2469,8 @@ TAINTING_TOOLS = {
     "read_page": "a web page",
     "look_at_page": "a web page",
     "github_repo": "a GitHub repository",
+    # Headlines off the news wires and the Fed's feed, written by strangers.
+    "market_news": "a news headline",
     # The user's own desk. His words, a website's, another session's — the
     # code already called this "a genuine injection surface" and then did not
     # gate it.
@@ -3570,12 +3651,11 @@ async def _perform_command(item: _StagedCommand) -> None:
             await speech.say("Cancelled, sir.", Priority.NORMAL)
             return
 
-        # `cd` into the project first: a start command means nothing in the
-        # wrong directory, and the path is quoted while the command itself has
-        # already been through `builds.command_problem`, which permits no
-        # shell metacharacter at all.
-        result = await actions.open_terminal(
-            f"cd {shlex.quote(item.path)} && {item.command}")
+        # In the project directory: a start command means nothing in the wrong
+        # one. The path travels separately (see actions.open_terminal_at) and
+        # the command has already been through `builds.command_problem`, which
+        # permits no shell metacharacter at all.
+        result = await actions.open_terminal_at(item.path, item.command)
         if result.get("success"):
             record("ran")
             await speech.say(
@@ -3659,10 +3739,12 @@ async def _perform_dialog(item: _StagedDialog) -> None:
             record("no_voice")             # the mouth went away between turns
             return
         # The read-back names the key AND warns about the focus theft, because
-        # the window coming forward is the part that interrupts the user.
+        # the window coming forward is the part that interrupts the user. On
+        # Windows the key goes into the console's input, not to its window,
+        # so nothing comes forward and there is nothing to warn about.
+        forward = "" if _KEYS_GO_TO_A_CONSOLE else " — this will bring that window forward"
         utt = await speech.say(
-            f"Pressing {said} on {_said_name(item)} — this will bring that "
-            f"window forward.", Priority.NORMAL)
+            f"Pressing {said} on {_said_name(item)}{forward}.", Priority.NORMAL)
         heard = await speech.wait_for(utt, timeout=READBACK_TIMEOUT)
         if utt.was_cancelled:
             if getattr(utt, "was_abandoned", False):
@@ -3685,8 +3767,9 @@ async def _perform_dialog(item: _StagedDialog) -> None:
             await speech.say(f"Pressed {said} on {_said_name(item)}.",
                              Priority.NORMAL)
         elif outcome == dialog.NOT_FOUND:
+            where = "a console" if _KEYS_GO_TO_A_CONSOLE else "a Terminal window"
             await speech.say(
-                f"{_said_name(item)} isn't in a Terminal window I can reach, "
+                f"{_said_name(item)} isn't in {where} I can reach, "
                 f"sir — another application is hosting it, so that one needs "
                 f"your own hand.", Priority.NORMAL)
         elif outcome == dialog.NOT_PERMITTED:
@@ -3737,6 +3820,21 @@ async def _tty_for_session_or_explain(session):
     return pid, tty, None
 
 
+# On Windows a keypress goes into the session's console input (dialog_windows),
+# not to a Terminal.app window: nothing is brought forward, and what the
+# session must be in to be reached is "a console".
+_KEYS_GO_TO_A_CONSOLE = sys.platform == "win32"
+
+
+def _keypress_supported() -> bool:
+    """Whether `answer_dialog` can work on this machine. On macOS it finds
+    the Terminal.app tab that owns a session's tty over AppleScript; on
+    Windows it attaches to the console that owns the session's pid. Both are
+    found by identity, never by focus (see dialog.py). Kept as the one gate
+    for a platform where neither holds."""
+    return True
+
+
 async def tool_answer_dialog(args: dict) -> str:
     """Validate the user's decision to press a key, and STAGE it.
 
@@ -3761,6 +3859,16 @@ async def tool_answer_dialog(args: dict) -> str:
         run_store.record_steer("", name, "", raw_key,
                                f"dialog:{reason or 'unresolved'}")
         return problem
+
+    if not _keypress_supported():
+        # Refused before anything is staged: see `_keypress_supported`. The
+        # brain is not offered this tool on Windows at all; this is the wall
+        # for a caller that reaches the endpoint anyway.
+        run_store.record_steer(session.session_id, session.voice_name,
+                               session.project, raw_key,
+                               "dialog:unsupported_platform")
+        return (f"I can't press keys in another terminal on this machine, sir — "
+                f"{_said_name(session)} needs you to answer it there yourself.")
 
     key = dialog.normalize_key(raw_key)
     if key is None:
@@ -3904,7 +4012,10 @@ async def tool_steer_session(args: dict) -> str:
 # place" speaks it and a path legitimately holds almost any punctuation. The
 # residual is prose in a header line, for the price of two same-named
 # directories; it is accepted, and it is not parity with the name wall.
-_PLAIN_PATH_RE = _action_re.compile(r"/[^\x00-\x1f\x7f-\x9f<>\"=\u2028\u2029]{0,299}")
+# On Windows a path starts at a drive letter (`C:\Users\...`), not at `/`; the
+# forbidden class after it is the same either way.
+_PLAIN_PATH_RE = _action_re.compile(
+    r"(?:/|[A-Za-z]:[\\/])[^\x00-\x1f\x7f-\x9f<>\"=\u2028\u2029]{0,299}")
 
 
 def _project_name_speakable(name) -> bool:
@@ -4934,7 +5045,7 @@ async def tool_open_in_terminal(args: dict) -> str:
     name, path, problem = _resolve_project_or_explain(reference)
     if problem:
         return problem
-    result = await actions.open_terminal(f"cd {shlex.quote(path)}")
+    result = await actions.open_terminal_at(path)
     if not result.get("success"):
         return result.get("confirmation") or "Terminal wouldn't open, sir."
     return f"Terminal's open in {name}, sir."
@@ -5484,7 +5595,7 @@ def _repo_relative(root: Path, resolved: Path) -> str:
     A filename on APFS may hold anything but `/` and NUL, so this value is
     never put in a header line; `_said_path` is for that."""
     try:
-        return str(resolved.relative_to(Path(os.path.realpath(str(root)))))
+        return resolved.relative_to(Path(os.path.realpath(str(root)))).as_posix()
     except ValueError:                       # cannot happen after containment
         return resolved.name
 
@@ -6422,15 +6533,25 @@ async def tool_learning_status(args: dict) -> str:
     ]
     lines = []
     for lesson in status["pending"][:6]:
+        # The body, not just the title: the body is what approval puts in
+        # front of a run (or into every conversation), so it is what he has
+        # to hear before saying yes.
         flag = " (reads like an instruction)" if lesson["risky"] else ""
         lines.append(f"waiting — lesson {lesson['id']} [{lesson['scope']}]{flag}: "
-                     f"{lesson['title']}")
+                     f"{lesson['title']} — {lesson['body']}")
     for lesson in status["active"][:6]:
-        record = (f"from {lesson['evidence']} trades" if lesson["scope"] == "trading"
-                  else f"{int(lesson['reliability'] * 100)}% reliable over "
-                       f"{lesson['uses']} uses")
+        if lesson["scope"] == "trading":
+            versus = f"from {lesson['evidence']} trades"
+        elif lesson["scope"] == "brain":
+            versus = "loaded into every conversation"
+        elif lesson["lift"] is None:
+            versus = "no comparison runs yet"
+        else:
+            versus = (f"{abs(round(lesson['lift'] * 100))} points "
+                      f"{'better' if lesson['lift'] >= 0 else 'worse'} than runs without it")
+        uses = "" if lesson["scope"] in ("brain", "trading") else f"{lesson['uses']} uses, "
         lines.append(f"in use — lesson {lesson['id']} [{lesson['scope']}], "
-                     f"{record}: {lesson['title']}")
+                     f"{uses}{versus}: {lesson['title']}")
     for skill in status["skills"][:6]:
         state = (f"v{skill['active_version']} in use" if skill["active_version"]
                  else "waiting for approval")
@@ -6523,6 +6644,8 @@ async def tool_run_skill(args: dict) -> str:
     result = await learning_engine.run_skill(name, kwargs)
     if result is None:
         return f"I have no approved skill called {_plain_name(name, 'that')}."
+    if result.bad_arguments:
+        return f"Those arguments don't fit that skill: {_cap_tool_result(result.error)[:300]}."
     if not result.ok:
         repair = " I'll try to repair it." if learning_engine.llm.enabled else ""
         return f"It failed: {_cap_tool_result(result.error)[:300]}.{repair}"
@@ -6695,6 +6818,485 @@ async def api_learning_approve(body: LearningRef):
 async def api_learning_retire(body: LearningRef):
     await asyncio.to_thread(_learning_ready)
     return {"said": await asyncio.to_thread(learning_engine.retire, body.ref)}
+
+
+# ---------------------------------------------------------------------------
+# Market study: trends, movement, and patterns re-tested after every close.
+# Read-only market data; the engine, its schedule and its statistics are in
+# market.py. JARVIS studies the market here; he cannot trade from it.
+# ---------------------------------------------------------------------------
+
+async def _market_notify(line: str, subtitle: str) -> None:
+    """The after-close summary. Posted whether or not a tab is open — the
+    user asked for it daily — and only ever text market.py composed from
+    numbers, so there is no foreign text in it."""
+    if notifier.available():
+        await notifier.notify("JARVIS", line, subtitle=subtitle)
+
+
+market_engine = market.MarketEngine(notify=_market_notify)
+
+
+def _market_symbols(value) -> list[str]:
+    if isinstance(value, str):
+        value = re.split(r"[,\s]+", value)
+    return [str(v) for v in (value or []) if str(v).strip()]
+
+
+def _say_pct(value) -> str:
+    return "unknown" if value is None else f"{value:+.1f}%"
+
+
+async def tool_market_brief(args: dict) -> str:
+    """The latest study, as numbers the brain can say back. Everything in it
+    is computed here from price bars; the only strings are ticker symbols
+    (held to market.SYMBOL_RE) and sentences market.py wrote itself."""
+    status = await asyncio.to_thread(market_engine.status)
+    if not status["enabled"]:
+        return "Market study is switched off (JARVIS_MARKET=0)."
+    if not status["configured"]:
+        return ("I have no market data keys. Add APCA_API_KEY_ID and APCA_API_SECRET_KEY "
+                "(a free Alpaca account) to .env and restart me.")
+    snap = status["snapshot"]
+    if not snap:
+        why = f" The last attempt failed: {status['last_error']}." if status["last_error"] else ""
+        return "I haven't finished my first pass over the market yet." + why
+    symbol = market.normalise_symbol(args.get("symbol") or "")
+    if symbol:
+        rows = snap["watchlist"] + snap["market"] + snap["sectors"]
+        view = next((v for v in rows if v["symbol"] == symbol), None)
+        if view is None:
+            return f"I don't follow {symbol}; add it to the watchlist and I will."
+        fired = [s["label"] + f" ({s['status']})" for s in snap["setups"] if symbol in s["symbols"]]
+        alerts = [a["text"] for a in status["alerts"] if a["symbol"] == symbol][:3]
+        return "\n".join(part for part in (
+            f"{symbol} at {view['price']}, {_say_pct(view['change'])} today, "
+            f"{_say_pct(view['ret_5d'])} over 5 days and {_say_pct(view['ret_20d'])} over 20 "
+            f"({_say_pct(view['rs_20d'])} against the S&P).",
+            f"Trend: {view['trend']}; {_say_pct(view['vs_50d'])} from its 50-day and "
+            f"{_say_pct(view['vs_200d'])} from its 200-day; RSI {view['rsi14']}; "
+            f"daily range {view['atr_pct']}%; volume {view['rvol']}× usual for the time of day; "
+            f"{_say_pct(view['from_high'])} from its 52-week high.",
+            "Patterns on the last close: " + ", ".join(fired) if fired else "",
+            "Alerts: " + "; ".join(alerts) if alerts else "",
+        ) if part)
+    lines = [snap["brief"]]
+    confirmed = [p for p in snap["patterns"] if p["status"] == market.CONFIRMED]
+    for p in confirmed[:4]:
+        hold = p["stats"].get("holdout", {})
+        lines.append(f"Confirmed: {p['label']} — {p['description']}; recent data "
+                     f"{100 * hold.get('mean', 0):+.2f}% per trade after costs, t {hold.get('t', 0)}.")
+    if snap["session"]["state"] == "open":
+        lines.append("The session is still open; I update every "
+                     f"{status['interval_min']} minutes.")
+    return "\n".join(lines)
+
+
+async def tool_market_watchlist(args: dict) -> str:
+    add, remove = _market_symbols(args.get("add")), _market_symbols(args.get("remove"))
+    await asyncio.to_thread(market.init_db)
+    if not add and not remove:
+        current = await asyncio.to_thread(market.watchlist)
+        return "I'm watching " + (", ".join(current) if current else "nothing") + "."
+    result = await asyncio.to_thread(market.change_watchlist, add, remove)
+    if result["added"]:
+        market_engine.wake()
+    said = []
+    if result["added"]:
+        said.append("added " + ", ".join(result["added"]))
+    if result["removed"]:
+        said.append("dropped " + ", ".join(result["removed"]))
+    if result["refused"]:
+        said.append("could not add " + ", ".join(map(str, result["refused"]))
+                    + f" (a ticker, and at most {market.WATCHLIST_MAX})")
+    said_text = "; ".join(said) or "nothing changed"
+    return (said_text[0].upper() + said_text[1:]
+            + f". Watching {len(result['watchlist'])} symbols.")
+
+
+async def tool_market_refresh(args: dict) -> str:
+    if not market_engine.configured:
+        return "I have no market data keys to refresh with."
+    _background.add(task := asyncio.create_task(_market_refresh_quietly()))
+    task.add_done_callback(_background.discard)
+    return "Refreshing the market study now; it takes under a minute."
+
+
+async def _market_refresh_quietly() -> None:
+    try:
+        await market_engine.tick(force=True)
+    except Exception as e:
+        market_engine.last_error = f"{type(e).__name__}: {e}"[:300]
+        log.warning("market refresh failed", exc_info=True)
+
+
+async def tool_market_fleet(args: dict) -> str:
+    """What the user's paper bots' completed trades have shown, per bot,
+    strategy, and market regime. Read-only; fleet.py held every name it
+    says to fleet.NAME_RE and wrote every sentence itself."""
+    return await asyncio.to_thread(fleet.describe, fleet.clean(_plain_name(args.get("bot") or "", "")))
+
+
+# The fleet watch. MegaEmpire's watchdog checks the paper fleet and repairs
+# what it safely can (restarts only; it never touches an order). JARVIS runs
+# it on a timer, so the fleet is seen to without anyone asking, and posts
+# each repair and each new problem that needs the user. fleet.py composes
+# every sentence from the report's codes; nothing from a log is said.
+
+_fleet_watch_last: dict = {}
+
+
+async def _fleet_watch_once(fix: bool = True) -> list[str]:
+    global _fleet_watch_last
+    report = await asyncio.to_thread(fleet.run_watch, fix)
+    if not report:
+        return []
+    news = fleet.watch_news(_fleet_watch_last, report)
+    _fleet_watch_last = report
+    for line in news:
+        try:
+            if notifier.available():
+                await notifier.notify("JARVIS", line, subtitle="Fleet watch")
+        except Exception:
+            log.warning("fleet watch notification failed", exc_info=True)
+    return news
+
+
+async def _fleet_watch_loop() -> None:
+    while True:
+        try:
+            await _fleet_watch_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("fleet watch failed", exc_info=True)
+        await asyncio.sleep(fleet.WATCH_EVERY_S)
+
+
+async def tool_fleet_health(args: dict) -> str:
+    """Is the fleet running properly: the watchdog's last report, as
+    sentences fleet.py wrote from its codes."""
+    return await asyncio.to_thread(fleet.health)
+
+
+async def tool_fleet_fix(args: dict) -> str:
+    if not fleet.watch_enabled():
+        return "The fleet watch is switched off (JARVIS_FLEET_WATCH=0)."
+    _background.add(task := asyncio.create_task(_fleet_watch_quietly()))
+    task.add_done_callback(_background.discard)
+    return "Checking the fleet now and repairing what I can; I'll post what I find."
+
+
+async def _fleet_watch_quietly() -> None:
+    try:
+        if not await _fleet_watch_once():
+            line = fleet.health().splitlines()[0]
+            if notifier.available():
+                await notifier.notify("JARVIS", line, subtitle="Fleet watch")
+    except Exception:
+        log.warning("fleet fix failed", exc_info=True)
+
+
+TOOL_HANDLERS.update({
+    "market_brief": tool_market_brief,
+    "market_watchlist": tool_market_watchlist,
+    "market_refresh": tool_market_refresh,
+    "market_fleet": tool_market_fleet,
+    "fleet_health": tool_fleet_health,
+    "fleet_fix": tool_fleet_fix,
+})
+# Changing what he follows, spending a burst of API calls, or restarting
+# the fleet on request is the user's call.
+ACTING_TOOLS.update({"market_watchlist", "market_refresh", "fleet_fix"})
+TAINT_EXEMPT_TOOLS.update({
+    "market_fleet": (
+        "it reads the fleet brain's trade table, not a session: numbers fleet.py "
+        "computed, regime words market.py chose, and bot/strategy names held to "
+        "fleet.NAME_RE (lowercase letters, digits, underscores)"),
+    "market_brief": (
+        "it reports numbers JARVIS computed from price bars, in sentences "
+        "market.py wrote; the only foreign strings are ticker symbols, held "
+        "to a letters-only pattern"),
+    "market_watchlist": "it edits the watchlist and says back ticker symbols",
+    "market_refresh": "it starts background work and says only that it has",
+    "fleet_health": (
+        "it reads the fleet watchdog's report as codes: sentences fleet.py wrote, "
+        "bot names held to fleet.NAME_RE, symbols to market.SYMBOL_RE; no log text"),
+    "fleet_fix": "it starts background work and says only that it has",
+})
+
+
+# The user's brokerage accounts, read-only: the fleet's Alpaca paper
+# accounts and their Webull and Tradier accounts. accounts.py only sends account queries;
+# keys stay in the files that hold them and are never said.
+
+async def tool_broker_accounts(args: dict) -> str:
+    """Balances and open positions, as sentences accounts.py wrote from
+    numbers; symbols, bot names and account numbers are held to patterns."""
+    bot = args.get("bot") or ""
+    said = str(bot).strip().lower()
+    name = said if said in ("webull", "tradier") else fleet.clean(_plain_name(bot, ""))
+    return await asyncio.to_thread(accounts.describe, name)
+
+
+async def tool_market_news(args: dict) -> str:
+    """Headlines that move prices or the regime. The first line is ours
+    (counts news.py computed); the headlines are a stranger's, so they go
+    out wrapped as untrusted text and the tool taints the turn."""
+    head, body = await asyncio.to_thread(news.describe, str(args.get("symbol") or ""))
+    return f"{head}\n{_wrap_untrusted('news', body)}" if body else head
+
+
+# The autopilot and the after-close study. autopilot.py pauses and resumes
+# new paper entries through MegaEmpire's audited command path, on fixed
+# rules; fleet_study.py reviews each finished session and tests lessons
+# forward. Every sentence is theirs, from numbers and NAME_RE names.
+
+async def _post(line: str, subtitle: str) -> None:
+    try:
+        if notifier.available():
+            await notifier.notify("JARVIS", line, subtitle=subtitle)
+    except Exception:
+        log.warning("%s notification failed", subtitle, exc_info=True)
+
+
+async def _autopilot_loop() -> None:
+    while True:
+        try:
+            for line in await asyncio.to_thread(autopilot.tick):
+                await _post(line, "Fleet autopilot")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("autopilot tick failed", exc_info=True)
+        await asyncio.sleep(autopilot.TICK_S)
+
+
+async def _fleet_study_once(force: bool = False) -> str:
+    session = (market.get_state("snapshot") or {}).get("session") or {}
+    day = session.get("day") or ""
+    if session.get("state") != "done" or not day:
+        return ""
+    if not force and market.get_state("fleet_studied") == day:
+        return ""
+    log_rows = autopilot.load_state().get("log", [])
+    return await asyncio.to_thread(fleet_study.study, day, None, log_rows)
+
+
+async def _options_once(force: bool = False) -> dict:
+    """After a close: record what the options market priced, then settle
+    expected moves and suggested trades the new bars decide."""
+    session = (market.get_state("snapshot") or {}).get("session") or {}
+    day = session.get("day") or ""
+    if session.get("state") != "done" or not day or not options.enabled():
+        return {}
+    if not force and market.get_state("options_recorded") == day:
+        return {}
+    got = await asyncio.to_thread(options.record_day, day)
+    got["ideas_scored"] = await asyncio.to_thread(trade_plan.score_ideas)
+    return got
+
+
+async def _fleet_study_loop() -> None:
+    while True:
+        try:
+            said = await _fleet_study_once()
+            if said:
+                await _post(said.splitlines()[0], "Fleet study")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("fleet study failed", exc_info=True)
+        try:
+            await _options_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("options record failed", exc_info=True)
+        await asyncio.sleep(600)
+
+
+async def tool_fleet_autopilot(args: dict) -> str:
+    """What the autopilot has paused and why, in autopilot.py's sentences."""
+    return await asyncio.to_thread(autopilot.describe)
+
+
+async def tool_fleet_study(args: dict) -> str:
+    """The latest after-close review and the lesson book."""
+    day = _plain_name(str(args.get("day") or "").strip(), "")
+    day = day if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) else ""
+    return await asyncio.to_thread(fleet_study.describe, day)
+
+
+async def tool_fleet_study_now(args: dict) -> str:
+    said = await _fleet_study_once(force=True)
+    return said or "There's no finished session to study yet; I study after each close."
+
+
+# Options and suggested trades. options.py reads chains (GET only) and
+# keeps a forward record of what they priced; trade_plan.py turns levels,
+# the trend and confirmed patterns into an entry, a stop and targets, and
+# scores every suggestion afterwards. Neither can place an order. Every
+# sentence is theirs, from numbers and symbols held to market.SYMBOL_RE.
+
+def _ticker(value) -> str:
+    sym = market.normalise_symbol(_plain_name(str(value or ""), ""))
+    return sym if market.SYMBOL_RE.fullmatch(sym) else ""
+
+
+async def tool_options_study(args: dict) -> str:
+    sym = _ticker(args.get("symbol")) or market.BENCHMARK
+    return await asyncio.to_thread(options.describe, sym)
+
+
+async def tool_trade_plan(args: dict) -> str:
+    style = _plain_name(str(args.get("style") or "swing").strip().lower(), "swing")
+    style = style if style in trade_plan.STYLES else "swing"
+    raw = args.get("symbol")
+    sym = _ticker(raw)
+    if raw and not sym:
+        return "That isn't a ticker I can plan for."
+    if not sym:
+        return await asyncio.to_thread(trade_plan.scan, style)
+    direction = _plain_name(str(args.get("direction") or "").strip().lower(), "")
+    direction = direction if direction in ("long", "short") else ""
+    instrument = _plain_name(str(args.get("instrument") or "both").strip().lower(), "both")
+    instrument = instrument if instrument in ("stock", "options", "both") else "both"
+    try:
+        risk = float(args.get("risk_dollars") or 0) or None
+    except (TypeError, ValueError):
+        risk = None
+    risk = risk if risk is None or 0 < risk <= 1_000_000 else None
+    return await asyncio.to_thread(trade_plan.suggest, sym, direction, style, instrument, risk)
+
+
+async def tool_trade_record(args: dict) -> str:
+    return await asyncio.to_thread(trade_plan.describe_record)
+
+
+TOOL_HANDLERS.update({"options_study": tool_options_study, "trade_plan": tool_trade_plan,
+                      "trade_record": tool_trade_record})
+TAINT_EXEMPT_TOOLS.update({
+    "options_study": (
+        "it reports numbers options.py computed from option quotes, in sentences it "
+        "wrote; the only names are the ticker (market.SYMBOL_RE) and the data source"),
+    "trade_plan": (
+        "it reports levels, entries and contracts trade_plan.py computed from bars and "
+        "option quotes, in its own sentences; tickers held to market.SYMBOL_RE and "
+        "pattern labels from market.PATTERNS"),
+    "trade_record": "it reports trade_plan.py's tally of its own suggestions, as counts",
+})
+
+TOOL_HANDLERS.update({"broker_accounts": tool_broker_accounts, "market_news": tool_market_news,
+                      "fleet_autopilot": tool_fleet_autopilot, "fleet_study": tool_fleet_study,
+                      "fleet_study_now": tool_fleet_study_now})
+ACTING_TOOLS.update({"fleet_study_now"})
+TAINT_EXEMPT_TOOLS.update({
+    "fleet_autopilot": (
+        "it reports autopilot.py's own state file: rules, bot names held to "
+        "fleet.NAME_RE, and reasons autopilot.py wrote from numbers"),
+    "fleet_study": (
+        "it reports fleet_study.py's reviews and lessons: numbers it computed, "
+        "regime words market.py chose, bot names held to fleet.NAME_RE, and "
+        "symbols already normalised by fleet.sync"),
+    "fleet_study_now": "it runs the study and says back fleet_study.py's own sentences",
+    "broker_accounts": (
+        "it reports balances and positions as numbers accounts.py read from the "
+        "brokers, in sentences it wrote; symbols held to market.SYMBOL_RE or an "
+        "option/crypto pattern, bot names to fleet.NAME_RE, account numbers to "
+        "accounts.ACCOUNT_RE; nothing else from a broker is said"),
+})
+
+
+@app.get("/api/accounts")
+async def api_accounts():
+    return await asyncio.to_thread(accounts.snapshot)
+
+
+# The hypothesis tournament: Claude and the local model propose market
+# rules and critique each other's; market.py's test decides. debate.py
+# holds the rules, the test and the scorecard; nothing a model writes runs.
+
+debate_tournament = debate.Tournament()
+
+
+async def tool_debate_scorecard(args: dict) -> str:
+    """Each model's record in the tournament, as sentences debate.py wrote
+    from counts; hypothesis names are held to debate.NAME_RE."""
+    await asyncio.to_thread(debate.init_db)
+    return await asyncio.to_thread(debate.describe)
+
+
+async def tool_debate_round(args: dict) -> str:
+    if not debate.enabled():
+        return "The tournament is switched off (JARVIS_DEBATE=0)."
+    if debate_tournament.busy:
+        return "A tournament round is already running."
+    _background.add(task := asyncio.create_task(_debate_round_quietly()))
+    task.add_done_callback(_background.discard)
+    return "Starting a tournament round; I'll post the results when it's tested."
+
+
+async def _debate_round_quietly() -> None:
+    try:
+        line = debate.describe_round(await debate_tournament.run_round())
+    except Exception:
+        log.warning("tournament round failed", exc_info=True)
+        return
+    try:
+        if notifier.available():
+            await notifier.notify("JARVIS", line, subtitle="Hypothesis tournament")
+    except Exception:
+        log.warning("tournament notification failed", exc_info=True)
+
+
+TOOL_HANDLERS.update({
+    "debate_scorecard": tool_debate_scorecard,
+    "debate_round": tool_debate_round,
+})
+# A round spends Claude usage on the user's subscription.
+ACTING_TOOLS.update({"debate_round"})
+TAINT_EXEMPT_TOOLS.update({
+    "debate_scorecard": (
+        "it reports counts and Brier scores debate.py computed, in sentences it "
+        "wrote; the only model-written strings are hypothesis names, held to "
+        "debate.NAME_RE (lowercase snake_case)"),
+    "debate_round": "it starts background work and says only that it has",
+})
+
+
+@app.get("/api/debate")
+async def api_debate():
+    return await asyncio.to_thread(debate_tournament.status)
+
+
+@app.post("/api/debate/round")
+async def api_debate_round():
+    return {"said": await tool_debate_round({})}
+
+
+@app.get("/api/market")
+async def api_market():
+    return await asyncio.to_thread(market_engine.status)
+
+
+@app.post("/api/market/refresh")
+async def api_market_refresh():
+    return {"said": await tool_market_refresh({})}
+
+
+class MarketWatchlistChange(BaseModel):
+    add: list[str] = []
+    remove: list[str] = []
+
+
+@app.post("/api/market/watchlist")
+async def api_market_watchlist(body: MarketWatchlistChange):
+    await asyncio.to_thread(market.init_db)
+    result = await asyncio.to_thread(market.change_watchlist, body.add, body.remove)
+    if result["added"]:
+        market_engine.wake()
+    return result
 
 
 @app.websocket("/ws/sessions")
@@ -6923,7 +7525,7 @@ async def api_project_open(body: ProjectOpenRequest):
     if body.target == "editor":
         result = await actions.open_in_editor(body.path)
     elif body.target == "terminal":
-        result = await actions.open_terminal(f"cd {shlex.quote(body.path)}")
+        result = await actions.open_terminal_at(body.path)
     elif body.target == "browser":
         result = await actions.open_browser(Path(body.path).as_uri())
     else:

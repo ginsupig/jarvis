@@ -122,7 +122,18 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "dfec0e28f7fc734987a1bcffd4feda103bde961f4a4721ce7957a7dccae96487",  # send it, do not ask twice
     "092df6a5e43bc5ed0a31e9f79b1f77cc4849754d1f4ab4807bded122ab97ad5f",  # say "start fresh" when a memory is refused
     "ca9b3f7823812af26aa4a0e6d4e07b25a67b60b46ff69cb209ad98af88b206f8",  # learning: teach, lessons, skills
+    "7cf1b37dda3ff10c43836851425ae44b57b7a7ca50d07b52992a44b2730299ae",  # learning: lessons scored against runs without them
+    "d3df43012e5af57facac27af3e9feff3b6c8c176a00e28951fff1e21bc42976d",  # the market study
+    "dbad66806c4e4c3f7618c1d6e0cd15ab39ba6ec0f22dfa5d745926da217db299",  # learning from the bots' trades
+    "2fe1dce27726533b509ea106ef830a3104593220fbb1adf9e150b0eeb6de1f77",  # the overwatch
+    "21a213be4f1104f2dd0ff2748456a11363ca15a2d7285920894e75c5a30ba8e1",  # seeing to the fleet
+    "81a6d2efb33e71d8a4cbfccbd96332bad16fb7b47ffe39dc9307046941517a48",  # the hypothesis tournament
+    "861e2c91e1624db6e6c82686bffd5ac91712a1f243531d1502eacb01f8853772",  # broker_accounts and market_news
+    "55968da8959e93b57cd1d87fa2d037bd360e68700ef9c721c82dbfe6d3f8a232",  # the autopilot and the fleet study
+    "f14ba0e223767c0c018a041fef60e7f81f8db1d93c0099e23a7e7a5160224d1b",  # options and trade suggestions
     "f8ed2572a0d7384cdd1f5a06a73018146e74e9964385972a34c50076a7de7912",  # lessons approved mid-conversation arrive as a note
+    "21057a2ddba2b143979890856192e602a481742d6451ded01ffa3ae461f296ae",  # the Learning tab beside options and trade suggestions
+    "8737aaa56e643944eae5b6e73f470d581fd701d35701e3bb04d32cdc8f20aa1b",  # the empire study beside options and trade suggestions
     "7854023f5366db4e97d9e750e6cdeaa62063b48146bda4d877aa97fa26ac2e57",  # MegaEmpire: look, never trade
 })
 
@@ -136,7 +147,11 @@ KNOWN_CONNECTIONS_HASHES = frozenset({
 
 
 def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+    # CRLF folded to LF first: Windows git (core.autocrlf) checks the shipped
+    # templates out with CRLF, and a template must still be recognised as the
+    # one it is. .gitattributes prevents that for new clones; this covers the
+    # clones that already exist, and a template the user saved with CRLF.
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
 
 
 def _recorded_seed_hash(seed: Path) -> Optional[str]:
@@ -385,7 +400,8 @@ def ensure_tool_token() -> str:
 
     token = secrets.token_urlsafe(32)
     try:
-        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY
+                     | getattr(os, "O_BINARY", 0), 0o600)
     except FileExistsError:
         pass
     else:
@@ -395,14 +411,23 @@ def ensure_tool_token() -> str:
             os.close(fd)
         return token
 
-    fd = os.open(str(path), os.O_RDWR | os.O_NOFOLLOW)
+    # Windows has no O_NOFOLLOW, no uids and no fchmod. The token lives under
+    # the user's profile, whose ACL already keeps other accounts out, so what
+    # is left to refuse there is a link planted at the path — checked by name
+    # first, since the open below cannot refuse to follow one.
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if not nofollow and (path.is_symlink()
+                         or getattr(path, "is_junction", lambda: False)()):
+        raise OSError(f"{path} is a link, not a regular file")
+    fd = os.open(str(path), os.O_RDWR | nofollow | getattr(os, "O_BINARY", 0))
     try:
         info = os.fstat(fd)
         if not _stat.S_ISREG(info.st_mode):
             raise OSError(f"{path} is not a regular file")
-        if info.st_uid != os.getuid():
-            raise OSError(f"{path} is owned by uid {info.st_uid}, not by us")
-        os.fchmod(fd, 0o600)
+        if hasattr(os, "getuid"):
+            if info.st_uid != os.getuid():
+                raise OSError(f"{path} is owned by uid {info.st_uid}, not by us")
+            os.fchmod(fd, 0o600)
         existing = os.read(fd, 4096).decode("utf-8", "ignore").strip()
         if existing:
             return existing

@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import STANDIN_PYTHON
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 FAKE = Path(__file__).parent / "fixtures" / "fake_brain.py"
@@ -30,14 +32,15 @@ def _carried(prompt: str) -> str:
 def _config(tmp_path, **kw):
     import brain
     return brain.BrainConfig(home=tmp_path / "jarvis",
-                             claude_path=f"{sys.executable} {FAKE}",
+                             claude_path=f"{STANDIN_PYTHON} {FAKE}",
                              turn_timeout=kw.pop("turn_timeout", 5.0),
                              warmup_timeout=kw.pop("warmup_timeout", 10.0),
                              **kw)
 
 
-def test_command_has_exact_flags(tmp_path):
+def test_command_has_exact_flags(tmp_path, monkeypatch):
     import brain
+    monkeypatch.setattr(brain, "_WINDOWS", False)   # the macOS flag, pinned
     b = brain.Brain(_config(tmp_path, model="opus"))
     cmd = b.command()
     joined = " ".join(cmd)
@@ -74,6 +77,14 @@ def test_command_has_exact_flags(tmp_path):
         "mcp__jarvis__retire_learning,mcp__jarvis__teach,"
         "mcp__jarvis__evaluate_code,mcp__jarvis__learn_skill,"
         "mcp__jarvis__run_skill,mcp__jarvis__improve_now,"
+        "mcp__jarvis__market_brief,mcp__jarvis__market_watchlist,"
+        "mcp__jarvis__market_refresh,mcp__jarvis__market_fleet,"
+        "mcp__jarvis__fleet_health,mcp__jarvis__fleet_fix,"
+        "mcp__jarvis__broker_accounts,mcp__jarvis__market_news,"
+        "mcp__jarvis__fleet_autopilot,mcp__jarvis__fleet_study,"
+        "mcp__jarvis__fleet_study_now,"
+        "mcp__jarvis__options_study,mcp__jarvis__trade_plan,mcp__jarvis__trade_record,"
+        "mcp__jarvis__debate_scorecard,mcp__jarvis__debate_round,"
         "mcp__jarvis__empire_status,mcp__jarvis__empire_study,"
         # The CLI's own two, and the only built-ins here: without them JARVIS
         # can read a page he was given the address of and find nothing.
@@ -410,11 +421,9 @@ async def test_launch_prompt_names_the_generation_being_started(tmp_path, monkey
 
 
 def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
+    # session_watch.pid_alive: os.kill(pid, 0) is Ctrl+C on Windows.
+    import session_watch
+    return session_watch.pid_alive(pid)
 
 
 @pytest.mark.asyncio

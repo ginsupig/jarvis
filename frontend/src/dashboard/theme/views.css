@@ -611,6 +611,58 @@
    ellipsing. At 380px "Sweep the theme files for r…" tells you nothing. */
 .sd .row-title { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
 
+/* ── MARKET ──────────────────────────────────────────────────────────────── */
+#market-view { display: flex; flex-direction: column; gap: var(--sp-5); }
+.market-figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-6);
+  margin-bottom: var(--sp-3);
+}
+.market-figures .readout { align-items: flex-start; }
+.market-summary,
+.market-brief-line {
+  max-width: 96ch;
+  margin: 0 0 var(--sp-2);
+  color: var(--text-dim);
+  font-size: var(--fs-base);
+}
+.market-brief-line { color: var(--text); }
+.market-error { margin-bottom: var(--sp-3); }
+.market-pair {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: var(--sp-5);
+}
+.market-add {
+  display: flex;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.market-add input { flex: 1; min-width: 0; max-width: 40ch; }
+
+/* ── DEBATE ──────────────────────────────────────────────────────────────── */
+#debate-view { display: flex; flex-direction: column; gap: var(--sp-5); }
+.debate-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+  gap: var(--sp-5);
+}
+.debate-readouts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-6);
+  margin-bottom: var(--sp-3);
+}
+.debate-readouts .readout { align-items: flex-start; }
+#debate-view .row-sub,
+#debate-view .row-title,
+#debate-view .row-note,
+#debate-view .panel-meta { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+#debate-view .panel-head { flex-wrap: wrap; }
+#accounts-view { display: flex; flex-direction: column; gap: var(--sp-5); }
+#accounts-view .row-title, #accounts-view .row-sub { white-space: normal; overflow-wrap: anywhere; }
+#debate-view .row-main { flex-direction: column; align-items: flex-start; gap: 2px; }
 /* ── Learning ─────────────────────────────────────────────────────────────── */
 .learning-said {
   margin-bottom: var(--sp-3);

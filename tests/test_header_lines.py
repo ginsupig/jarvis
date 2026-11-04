@@ -396,6 +396,16 @@ _FOR_THE_LOCAL_MODEL = (
 # Not driven, each with the reason. An entry here is a decision, not a
 # to-do: every one of them is a place where a session's own words DO reach a
 # string, and the argument is why that string is safe.
+_MARKET_NUMBERS = (
+    "it reads no session or run at all: every value is a number market.py "
+    "computed from price bars, a ticker held to `market.SYMBOL_RE`, or a word "
+    "market.py chose itself (a pattern status, 'open'/'done', its own regime "
+    "sentence)")
+_FLEET_ROWS = (
+    "it reads the fleet brain's outcomes table, never a session or run: bot and "
+    "strategy names pass fleet.clean (NAME_RE, lowercase letters, digits and "
+    "underscores, else dropped), symbols market.normalise_symbol, and the rest "
+    "are numbers and regime words market.py chose")
 EXEMPT = {
     "learning._activate": _LEARNING_ROW,
     "learning._lesson_summary": _LEARNING_ROW,
@@ -688,6 +698,62 @@ EXEMPT = {
         "sentence is `_describe_run`\'s and the task heading is "
         "`_build_progress_clause`\'s — all three driven. `project_name` "
         "appears once, in a `==` comparison"),
+    # The market study. `status`, `state` and `summary` are keys of its own
+    # dicts — a pattern's verdict, the session's open/done, the regime
+    # sentence — which share a name with session fields and nothing else.
+    "fleet.sync": _FLEET_ROWS,
+    "market.compose_brief": _MARKET_NUMBERS,
+    "market.describe_regime": _MARKET_NUMBERS,
+    "server.tool_market_brief": _MARKET_NUMBERS,
+    # The hypothesis tournament. `name`, `status` and `reason` are columns of
+    # its own debate_hypotheses table; a name is held to debate.NAME_RE before
+    # it is stored, a status and reason are words debate.py and market.py chose.
+    "debate._comparables": (
+        "it reads a hypothesis row's id, name and spec to build cache keys and "
+        "compiled rules; nothing it reads is printed"),
+    "debate.context_text": (
+        "it builds text for the tournament players, which only PROPOSE: names "
+        "are held to debate.NAME_RE, verdicts are market.py's words, and the "
+        "one free-text field from a model (the critic's objection) is in a "
+        "`debate._fence` block; every answer is parsed by `parse_spec` or the "
+        "critique checks before anything uses it"),
+    "debate.describe_round": (
+        "it says hypothesis names held to debate.NAME_RE, statuses market.py "
+        "and debate.py chose, and problem notes debate.py wrote; no model text"),
+    # Brokerage accounts and market news. `status` is a code of accounts.py's
+    # or news.py's own; `name`/`title` are a broker's or a wire's fields.
+    "accounts.describe": (
+        "it says numbers accounts.py parsed, statuses it chose, bot names held "
+        "to fleet.NAME_RE, account numbers to ACCOUNT_RE, and instruments that "
+        "`accounts.instrument` held to a symbol/option/crypto pattern"),
+    "news.describe": (
+        "its first line is counts and source names news.py chose; the "
+        "headlines are returned separately and server.tool_market_news wraps "
+        "them in an untrusted block, and the tool taints the turn"),
+    # The autopilot and the after-close study. `status`, `state`, `reason` and
+    # `action` are their own fields or MegaEmpire's command columns.
+    "autopilot.last_commands": (
+        "it reads MegaEmpire's command rows; a command's `reason` (which a user "
+        "may have typed) is only tested with startswith(REASON_PREFIX) to tell "
+        "JARVIS's own pauses from anyone else's, and is never printed"),
+    "autopilot.decide": (
+        "its reasons are sentences it builds from numbers; it reads a command's "
+        "`action` and `reason` only to compare them, never to print them"),
+    "trade_plan.track_record": (
+        "it counts trade_plan.py's own trade_ideas rows; `style` and `kind` are "
+        "values it wrote from its STYLES keys and its three entry kinds"),
+    "fleet_study.update_lessons": (
+        "its sentences are numbers it computed, trend words market.py chose, and "
+        "bot names fleet.sync held to fleet.NAME_RE; `status` is its own column"),
+    "fleet_study.describe": (
+        "it says fleet_study.py's own review JSON and lesson rows: numbers, "
+        "market.py's trend words, NAME_RE bot names and SYMBOL_RE symbols"),
+    "server._fleet_study_once": (
+        "it reads the market snapshot's own `session.state` / `day` (market.py's "
+        "values) to decide whether to study; nothing it reads is printed"),
+    "news.from_fmp": (
+        "it reads FMP's `title` into a headline that only ever leaves inside "
+        "the untrusted block (see news.describe); nothing is printed here"),
 }
 
 
@@ -1395,7 +1461,7 @@ def test_open_in_terminal_never_speaks_a_hostile_directory_name(server, monkeypa
 
     async def _opened(*a, **k):
         return {"success": True}
-    monkeypatch.setattr(server.actions, "open_terminal", _opened)
+    monkeypatch.setattr(server.actions, "open_terminal_at", _opened)
     out = asyncio.run(server.tool_open_in_terminal({"project": "notes"}))
     assert_header_is_jarviss_own(out)
     assert MARKER not in out

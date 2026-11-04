@@ -48,6 +48,12 @@
         </button>
         <button id="tab-usage" class="tab" data-view="usage"
                 role="tab" aria-selected="false">Usage</button>
+        <button id="tab-market" class="tab" data-view="market"
+                role="tab" aria-selected="false">Market</button>
+        <button id="tab-debate" class="tab" data-view="debate"
+                role="tab" aria-selected="false">Debate</button>
+        <button id="tab-accounts" class="tab" data-view="accounts"
+                role="tab" aria-selected="false">Accounts</button>
       </nav>
     </header>
 
@@ -289,6 +295,21 @@
            built in usage.ts: three independent sources feed this view and
            each has to be able to say, on its own, that it knows nothing. -->
       <div id="usage-view" class="view" hidden></div>
+
+      <!-- ── MARKET ──────────────────────────────────────────────────────── —
+           JARVIS's market study: regime, sectors, watchlist, alerts, and the
+           patterns he re-tests after every close. Built in market.ts. -->
+      <div id="market-view" class="view" hidden></div>
+
+      <!-- ── DEBATE ──────────────────────────────────────────────────────── —
+           The hypothesis tournament: Claude and the local model propose and
+           critique market rules; the market study tests them. Built in debate.ts. -->
+      <div id="debate-view" class="view" hidden></div>
+
+      <!-- ── ACCOUNTS ────────────────────────────────────────────────────── —
+           The fleet's Alpaca paper accounts and the user's Webull account,
+           read-only. Built in accounts.ts. -->
+      <div id="accounts-view" class="view" hidden></div>
     </main>
 
     <aside id="detail" class="pane brackets" hidden></aside>
