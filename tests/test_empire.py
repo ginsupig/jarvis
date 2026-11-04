@@ -82,8 +82,9 @@ def test_sources_take_names_and_windows_paths(monkeypatch):
     monkeypatch.setenv("JARVIS_EMPIRE_URL", "http://192.168.1.20:8765/")
     config = empire.EmpireConfig.from_env()
     assert config.url == "http://192.168.1.20:8765"
-    assert [(n, str(p)) for n, p in config.sources] == [
-        ("fable", "C:/fable/data"), ("", "C:/orb_elite/state/feedback"), ("revbot", "/x/y")]
+    assert [(n, Path(p)) for n, p in config.sources] == [
+        ("fable", Path("C:/fable/data")), ("", Path("C:/orb_elite/state/feedback")),
+        ("revbot", Path("/x/y"))]
     assert config.enabled
 
 
