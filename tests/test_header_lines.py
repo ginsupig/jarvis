@@ -695,6 +695,40 @@ EXEMPT = {
     "debate.describe_round": (
         "it says hypothesis names held to debate.NAME_RE, statuses market.py "
         "and debate.py chose, and problem notes debate.py wrote; no model text"),
+    # Brokerage accounts and market news. `status` is a code of accounts.py's
+    # or news.py's own; `name`/`title` are a broker's or a wire's fields.
+    "accounts.describe": (
+        "it says numbers accounts.py parsed, statuses it chose, bot names held "
+        "to fleet.NAME_RE, account numbers to ACCOUNT_RE, and instruments that "
+        "`accounts.instrument` held to a symbol/option/crypto pattern"),
+    "news.describe": (
+        "its first line is counts and source names news.py chose; the "
+        "headlines are returned separately and server.tool_market_news wraps "
+        "them in an untrusted block, and the tool taints the turn"),
+    # The autopilot and the after-close study. `status`, `state`, `reason` and
+    # `action` are their own fields or MegaEmpire's command columns.
+    "autopilot.last_commands": (
+        "it reads MegaEmpire's command rows; a command's `reason` (which a user "
+        "may have typed) is only tested with startswith(REASON_PREFIX) to tell "
+        "JARVIS's own pauses from anyone else's, and is never printed"),
+    "autopilot.decide": (
+        "its reasons are sentences it builds from numbers; it reads a command's "
+        "`action` and `reason` only to compare them, never to print them"),
+    "trade_plan.track_record": (
+        "it counts trade_plan.py's own trade_ideas rows; `style` and `kind` are "
+        "values it wrote from its STYLES keys and its three entry kinds"),
+    "fleet_study.update_lessons": (
+        "its sentences are numbers it computed, trend words market.py chose, and "
+        "bot names fleet.sync held to fleet.NAME_RE; `status` is its own column"),
+    "fleet_study.describe": (
+        "it says fleet_study.py's own review JSON and lesson rows: numbers, "
+        "market.py's trend words, NAME_RE bot names and SYMBOL_RE symbols"),
+    "server._fleet_study_once": (
+        "it reads the market snapshot's own `session.state` / `day` (market.py's "
+        "values) to decide whether to study; nothing it reads is printed"),
+    "news.from_fmp": (
+        "it reads FMP's `title` into a headline that only ever leaves inside "
+        "the untrusted block (see news.describe); nothing is printed here"),
 }
 
 

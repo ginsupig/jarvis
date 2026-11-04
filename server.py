@@ -97,7 +97,13 @@ import dialog
 import jarvis_memory
 import learning
 import learning_store
+import accounts
+import autopilot
 import fleet
+import fleet_study
+import news
+import options
+import trade_plan
 import debate
 import market
 import notifier
@@ -1879,6 +1885,12 @@ async def lifespan(application: FastAPI):
         if fleet.watch_enabled():
             _background.add(task := asyncio.create_task(_fleet_watch_loop(), name="fleet-watch"))
             task.add_done_callback(_background.discard)
+        if autopilot.enabled():
+            _background.add(task := asyncio.create_task(_autopilot_loop(), name="autopilot"))
+            task.add_done_callback(_background.discard)
+        if fleet_study.enabled():
+            _background.add(task := asyncio.create_task(_fleet_study_loop(), name="fleet-study"))
+            task.add_done_callback(_background.discard)
         try:
             await debate_tournament.start()
         except Exception:
@@ -2439,6 +2451,8 @@ TAINTING_TOOLS = {
     "read_page": "a web page",
     "look_at_page": "a web page",
     "github_repo": "a GitHub repository",
+    # Headlines off the news wires and the Fed's feed, written by strangers.
+    "market_news": "a news headline",
     # The user's own desk. His words, a website's, another session's — the
     # code already called this "a genuine injection surface" and then did not
     # gate it.
@@ -6893,6 +6907,193 @@ TAINT_EXEMPT_TOOLS.update({
         "bot names held to fleet.NAME_RE, symbols to market.SYMBOL_RE; no log text"),
     "fleet_fix": "it starts background work and says only that it has",
 })
+
+
+# The user's brokerage accounts, read-only: the fleet's Alpaca paper
+# accounts and their Webull and Tradier accounts. accounts.py only sends account queries;
+# keys stay in the files that hold them and are never said.
+
+async def tool_broker_accounts(args: dict) -> str:
+    """Balances and open positions, as sentences accounts.py wrote from
+    numbers; symbols, bot names and account numbers are held to patterns."""
+    bot = args.get("bot") or ""
+    said = str(bot).strip().lower()
+    name = said if said in ("webull", "tradier") else fleet.clean(_plain_name(bot, ""))
+    return await asyncio.to_thread(accounts.describe, name)
+
+
+async def tool_market_news(args: dict) -> str:
+    """Headlines that move prices or the regime. The first line is ours
+    (counts news.py computed); the headlines are a stranger's, so they go
+    out wrapped as untrusted text and the tool taints the turn."""
+    head, body = await asyncio.to_thread(news.describe, str(args.get("symbol") or ""))
+    return f"{head}\n{_wrap_untrusted('news', body)}" if body else head
+
+
+# The autopilot and the after-close study. autopilot.py pauses and resumes
+# new paper entries through MegaEmpire's audited command path, on fixed
+# rules; fleet_study.py reviews each finished session and tests lessons
+# forward. Every sentence is theirs, from numbers and NAME_RE names.
+
+async def _post(line: str, subtitle: str) -> None:
+    try:
+        if notifier.available():
+            await notifier.notify("JARVIS", line, subtitle=subtitle)
+    except Exception:
+        log.warning("%s notification failed", subtitle, exc_info=True)
+
+
+async def _autopilot_loop() -> None:
+    while True:
+        try:
+            for line in await asyncio.to_thread(autopilot.tick):
+                await _post(line, "Fleet autopilot")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("autopilot tick failed", exc_info=True)
+        await asyncio.sleep(autopilot.TICK_S)
+
+
+async def _fleet_study_once(force: bool = False) -> str:
+    session = (market.get_state("snapshot") or {}).get("session") or {}
+    day = session.get("day") or ""
+    if session.get("state") != "done" or not day:
+        return ""
+    if not force and market.get_state("fleet_studied") == day:
+        return ""
+    log_rows = autopilot.load_state().get("log", [])
+    return await asyncio.to_thread(fleet_study.study, day, None, log_rows)
+
+
+async def _options_once(force: bool = False) -> dict:
+    """After a close: record what the options market priced, then settle
+    expected moves and suggested trades the new bars decide."""
+    session = (market.get_state("snapshot") or {}).get("session") or {}
+    day = session.get("day") or ""
+    if session.get("state") != "done" or not day or not options.enabled():
+        return {}
+    if not force and market.get_state("options_recorded") == day:
+        return {}
+    got = await asyncio.to_thread(options.record_day, day)
+    got["ideas_scored"] = await asyncio.to_thread(trade_plan.score_ideas)
+    return got
+
+
+async def _fleet_study_loop() -> None:
+    while True:
+        try:
+            said = await _fleet_study_once()
+            if said:
+                await _post(said.splitlines()[0], "Fleet study")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("fleet study failed", exc_info=True)
+        try:
+            await _options_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("options record failed", exc_info=True)
+        await asyncio.sleep(600)
+
+
+async def tool_fleet_autopilot(args: dict) -> str:
+    """What the autopilot has paused and why, in autopilot.py's sentences."""
+    return await asyncio.to_thread(autopilot.describe)
+
+
+async def tool_fleet_study(args: dict) -> str:
+    """The latest after-close review and the lesson book."""
+    day = _plain_name(str(args.get("day") or "").strip(), "")
+    day = day if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) else ""
+    return await asyncio.to_thread(fleet_study.describe, day)
+
+
+async def tool_fleet_study_now(args: dict) -> str:
+    said = await _fleet_study_once(force=True)
+    return said or "There's no finished session to study yet; I study after each close."
+
+
+# Options and suggested trades. options.py reads chains (GET only) and
+# keeps a forward record of what they priced; trade_plan.py turns levels,
+# the trend and confirmed patterns into an entry, a stop and targets, and
+# scores every suggestion afterwards. Neither can place an order. Every
+# sentence is theirs, from numbers and symbols held to market.SYMBOL_RE.
+
+def _ticker(value) -> str:
+    sym = market.normalise_symbol(_plain_name(str(value or ""), ""))
+    return sym if market.SYMBOL_RE.fullmatch(sym) else ""
+
+
+async def tool_options_study(args: dict) -> str:
+    sym = _ticker(args.get("symbol")) or market.BENCHMARK
+    return await asyncio.to_thread(options.describe, sym)
+
+
+async def tool_trade_plan(args: dict) -> str:
+    style = _plain_name(str(args.get("style") or "swing").strip().lower(), "swing")
+    style = style if style in trade_plan.STYLES else "swing"
+    raw = args.get("symbol")
+    sym = _ticker(raw)
+    if raw and not sym:
+        return "That isn't a ticker I can plan for."
+    if not sym:
+        return await asyncio.to_thread(trade_plan.scan, style)
+    direction = _plain_name(str(args.get("direction") or "").strip().lower(), "")
+    direction = direction if direction in ("long", "short") else ""
+    instrument = _plain_name(str(args.get("instrument") or "both").strip().lower(), "both")
+    instrument = instrument if instrument in ("stock", "options", "both") else "both"
+    try:
+        risk = float(args.get("risk_dollars") or 0) or None
+    except (TypeError, ValueError):
+        risk = None
+    risk = risk if risk is None or 0 < risk <= 1_000_000 else None
+    return await asyncio.to_thread(trade_plan.suggest, sym, direction, style, instrument, risk)
+
+
+async def tool_trade_record(args: dict) -> str:
+    return await asyncio.to_thread(trade_plan.describe_record)
+
+
+TOOL_HANDLERS.update({"options_study": tool_options_study, "trade_plan": tool_trade_plan,
+                      "trade_record": tool_trade_record})
+TAINT_EXEMPT_TOOLS.update({
+    "options_study": (
+        "it reports numbers options.py computed from option quotes, in sentences it "
+        "wrote; the only names are the ticker (market.SYMBOL_RE) and the data source"),
+    "trade_plan": (
+        "it reports levels, entries and contracts trade_plan.py computed from bars and "
+        "option quotes, in its own sentences; tickers held to market.SYMBOL_RE and "
+        "pattern labels from market.PATTERNS"),
+    "trade_record": "it reports trade_plan.py's tally of its own suggestions, as counts",
+})
+
+TOOL_HANDLERS.update({"broker_accounts": tool_broker_accounts, "market_news": tool_market_news,
+                      "fleet_autopilot": tool_fleet_autopilot, "fleet_study": tool_fleet_study,
+                      "fleet_study_now": tool_fleet_study_now})
+ACTING_TOOLS.update({"fleet_study_now"})
+TAINT_EXEMPT_TOOLS.update({
+    "fleet_autopilot": (
+        "it reports autopilot.py's own state file: rules, bot names held to "
+        "fleet.NAME_RE, and reasons autopilot.py wrote from numbers"),
+    "fleet_study": (
+        "it reports fleet_study.py's reviews and lessons: numbers it computed, "
+        "regime words market.py chose, bot names held to fleet.NAME_RE, and "
+        "symbols already normalised by fleet.sync"),
+    "fleet_study_now": "it runs the study and says back fleet_study.py's own sentences",
+    "broker_accounts": (
+        "it reports balances and positions as numbers accounts.py read from the "
+        "brokers, in sentences it wrote; symbols held to market.SYMBOL_RE or an "
+        "option/crypto pattern, bot names to fleet.NAME_RE, account numbers to "
+        "accounts.ACCOUNT_RE; nothing else from a broker is said"),
+})
+
+
+@app.get("/api/accounts")
+async def api_accounts():
+    return await asyncio.to_thread(accounts.snapshot)
 
 
 # The hypothesis tournament: Claude and the local model propose market

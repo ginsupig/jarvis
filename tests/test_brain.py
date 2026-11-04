@@ -80,6 +80,10 @@ def test_command_has_exact_flags(tmp_path, monkeypatch):
         "mcp__jarvis__market_brief,mcp__jarvis__market_watchlist,"
         "mcp__jarvis__market_refresh,mcp__jarvis__market_fleet,"
         "mcp__jarvis__fleet_health,mcp__jarvis__fleet_fix,"
+        "mcp__jarvis__broker_accounts,mcp__jarvis__market_news,"
+        "mcp__jarvis__fleet_autopilot,mcp__jarvis__fleet_study,"
+        "mcp__jarvis__fleet_study_now,"
+        "mcp__jarvis__options_study,mcp__jarvis__trade_plan,mcp__jarvis__trade_record,"
         "mcp__jarvis__debate_scorecard,mcp__jarvis__debate_round,"
         # The CLI's own two, and the only built-ins here: without them JARVIS
         # can read a page he was given the address of and find nothing.

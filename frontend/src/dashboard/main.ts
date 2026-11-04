@@ -19,6 +19,7 @@ import { initSpecs, refreshSpecs } from "./specs";
 import { initUsage, refreshUsageView } from "./usage";
 import { initMarket, refreshMarketView } from "./market";
 import { initDebate, refreshDebateView } from "./debate";
+import { initAccounts, refreshAccountsView } from "./accounts";
 import {
   el, row, readout, bar, pill, setTone, statusDot, statusPill, stateStyle,
   emptyState, flash,
@@ -467,6 +468,7 @@ function setupTabs(): void {
     usage: document.getElementById("usage-view"),
     market: document.getElementById("market-view"),
     debate: document.getElementById("debate-view"),
+    accounts: document.getElementById("accounts-view"),
   };
   for (const tab of tabs) {
     tab.addEventListener("click", () => {
@@ -495,6 +497,7 @@ function setupTabs(): void {
       if (view === "usage") void refreshUsageView();
       if (view === "market") void refreshMarketView();
       if (view === "debate") void refreshDebateView();
+      if (view === "accounts") void refreshAccountsView();
     });
   }
 }
@@ -523,6 +526,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initMarket();
   // So is the tournament, once a day after the close.
   initDebate();
+  initAccounts();
 
   connectLive({
     onReconcile: () => void reconcile(),

@@ -20,6 +20,7 @@ def _never_study_the_real_market(monkeypatch):
     monkeypatch.setenv("JARVIS_MARKET_AUTOSTART", "0")
     monkeypatch.setenv("APCA_API_KEY_ID", "")
     monkeypatch.setenv("APCA_API_SECRET_KEY", "")
+    monkeypatch.setenv("JARVIS_MARKET_KEYS_FROM", "")
 
 
 @pytest.fixture(autouse=True)
@@ -31,6 +32,46 @@ def _never_read_the_real_fleet(monkeypatch, tmp_path):
     # Nor run the real watchdog, which restarts processes.
     monkeypatch.setenv("JARVIS_FLEET_WATCHDOG", str(tmp_path / "fleet" / "no_watchdog.py"))
     monkeypatch.setenv("JARVIS_FLEET_WATCH_REPORT", str(tmp_path / "fleet" / "watch_report.json"))
+
+
+@pytest.fixture(autouse=True)
+def _never_scan_the_real_project_roots(monkeypatch):
+    """The developer's .env may list project roots (JARVIS_PROJECT_ROOTS);
+    server.py loads it with setdefault, so the scan would walk real disks.
+    Empty means the defaults, which tests already point at tmp."""
+    monkeypatch.setenv("JARVIS_PROJECT_ROOTS", "")
+
+
+@pytest.fixture(autouse=True)
+def _never_read_a_real_account(monkeypatch, tmp_path):
+    """broker_accounts reads the fleet's real keys and the user's Webull
+    account. No test may: point the key file and roster at tmp, blank the
+    Webull keys (set, not deleted: server.py reloads .env with setdefault),
+    and drop the one-minute cache between tests."""
+    import accounts
+    monkeypatch.setenv("JARVIS_ACCOUNTS_KEYS", str(tmp_path / "accounts" / "keys.env"))
+    monkeypatch.setenv("JARVIS_ACCOUNTS_ROSTER", str(tmp_path / "accounts" / "megamind.yaml"))
+    monkeypatch.setenv("JARVIS_TRADIER_KEYS", str(tmp_path / "accounts" / "tradier.env"))
+    for name in ("WEBULL_APP_KEY", "WEBULL_APP_SECRET", "WEBULL_ACCOUNT_ID",
+                 "TRADIER_TOKEN", "TRADIER_ACCESS_TOKEN", "TRADIER_ACCOUNT_ID"):
+        monkeypatch.setenv(name, "")
+    monkeypatch.setattr(accounts, "_webull_api", None)
+    accounts._cache.clear()
+    # Nor the news wires: no Finnhub/FMP keys, and Fed/Alpaca readers off.
+    import news
+    for name in ("FINNHUB_API_KEY", "FMP_API_KEY"):
+        monkeypatch.setenv(name, "")
+    monkeypatch.setattr(news, "READERS", {})
+    news._cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _never_command_the_real_fleet(monkeypatch, tmp_path):
+    """The autopilot submits pause/resume commands through MegaEmpire's own
+    code. Off for every test, and pointed at a checkout that doesn't exist;
+    tests/test_autopilot.py drives decide() and tick() with fakes."""
+    monkeypatch.setenv("JARVIS_AUTOPILOT", "0")
+    monkeypatch.setenv("JARVIS_AUTOPILOT_ROOT", str(tmp_path / "no_megaempire"))
 
 
 @pytest.fixture(autouse=True)

@@ -249,6 +249,43 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   each repair and each new problem needing the user; tools `fleet_health`
   and `fleet_fix` (acting). Tests point the script at a file that doesn't
   exist (conftest), so no test can restart anything
+- `JARVIS_ACCOUNTS` (default on), `JARVIS_ACCOUNTS_KEYS`, `JARVIS_ACCOUNTS_ROSTER`,
+  `WEBULL_APP_KEY`, `WEBULL_APP_SECRET`, `WEBULL_ACCOUNT_ID`, `WEBULL_REGION` —
+  read-only brokerage accounts (see `accounts.py`): every bot holding a paper
+  slot in MegaEmpire's roster, under its key prefix in the proxy's .env, plus
+  the user's Webull account (webull-openapi-python-sdk; a new app's first
+  token is approved in the Webull app) and Tradier account (`TRADIER_TOKEN`/
+  `TRADIER_ACCOUNT_ID` here, else read from `JARVIS_TRADIER_KEYS`, default
+  C:/MOM/.env). Tool `broker_accounts`, `/api/accounts`, dashboard Accounts
+  tab. GET/account queries only; keys are never copied or said. Tests point
+  the files at tmp and blank the Webull/Tradier keys (conftest)
+- `JARVIS_MARKET_KEYS_FROM` (optional) — a fleet key prefix (e.g. `AGS_ALPACA`)
+  whose pair the market study reads in place instead of `APCA_API_KEY_ID`
+- `JARVIS_NEWS` (default on), `FINNHUB_API_KEY`, `FMP_API_KEY` (optional) —
+  `news.py`: Alpaca's news wire (market study key), the Fed's press RSS, and
+  Finnhub/FMP when keyed; tool `market_news` TAINTS (headlines are wrapped
+  untrusted). Tests empty `news.READERS` (conftest)
+- `JARVIS_AUTOPILOT` (default on), `JARVIS_AUTOPILOT_DAY_LOSS_PCT` (2.0),
+  `JARVIS_AUTOPILOT_FLEET_LOSS_PCT` (1.5), `JARVIS_AUTOPILOT_ROOT` — the
+  autopilot (`autopilot.py`): every 5 min while Alpaca's clock says open, pause
+  new paper entries for a bot down 2% on the day, for every bot at a 1.5%
+  fleet loss, or for a bot whose confirmed losing lesson matches today's trend;
+  resume its own pauses next session. Pause/resume only, via MegaEmpire's
+  `core.fleet_learning.submit_command` (audited, paper-only; exits untouched);
+  never budget caps (MegaEmpire can't clear one). State in
+  `<data dir>/autopilot.json`. Tool `fleet_autopilot`. Tests: off (conftest)
+- `JARVIS_FLEET_STUDY` (default on) — `fleet_study.py`: after each finished
+  session, a day review (fleet_reviews) and the lesson book (fleet_lessons:
+  propose at |t|>=2.5 over 15 trades/5 days, confirm on 10 forward trades/3
+  days, retire on disagreement). Tools `fleet_study`, `fleet_study_now` (acting)
+- `JARVIS_OPTIONS` (default on) — `options.py`: option chains read-only from
+  Tradier (the token beside the accounts, real time) or Alpaca's indicative
+  feed. Tool `options_study`; after each close it records SPY/QQQ/IWM and the
+  watchlist (option_days, option_moves) and scores expected moves and implied
+  against later realised vol. `trade_plan.py`: tools `trade_plan` (levels,
+  bias, entries, stop, targets, option contract or debit spread; scans the
+  followed list without a symbol) and `trade_record`; every suggestion is
+  saved to trade_ideas and scored on daily bars after the close. No orders
 - `JARVIS_LEARNING_AUTO_APPLY` (optional, default off) — put reflected run
   lessons on trial without approval, and adopt improved versions of approved
   skills that pass their full suite and gain no new module. Brain lessons and

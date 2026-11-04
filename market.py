@@ -135,6 +135,16 @@ def interval_minutes() -> int:
 
 
 def keys() -> tuple[str, str]:
+    """APCA_API_KEY_ID/SECRET, unless JARVIS_MARKET_KEYS_FROM names a fleet
+    key prefix (e.g. AGS_ALPACA): then that bot's pair, read in place from
+    the fleet's key file (accounts.keys_path) and never copied. Bars and the
+    calendar are all this module asks for, whichever key it is."""
+    prefix = os.getenv("JARVIS_MARKET_KEYS_FROM", "").strip()
+    if prefix:
+        import accounts
+        fleet_keys = accounts.read_env(accounts.keys_path())
+        return (fleet_keys.get(prefix + "_KEY", "").strip(),
+                fleet_keys.get(prefix + "_SECRET", "").strip())
     return (os.getenv("APCA_API_KEY_ID", "").strip(),
             os.getenv("APCA_API_SECRET_KEY", "").strip())
 

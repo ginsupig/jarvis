@@ -47,6 +47,8 @@
                 role="tab" aria-selected="false">Market</button>
         <button id="tab-debate" class="tab" data-view="debate"
                 role="tab" aria-selected="false">Debate</button>
+        <button id="tab-accounts" class="tab" data-view="accounts"
+                role="tab" aria-selected="false">Accounts</button>
       </nav>
     </header>
 
@@ -238,6 +240,11 @@
            The hypothesis tournament: Claude and the local model propose and
            critique market rules; the market study tests them. Built in debate.ts. -->
       <div id="debate-view" class="view" hidden></div>
+
+      <!-- ── ACCOUNTS ────────────────────────────────────────────────────── —
+           The fleet's Alpaca paper accounts and the user's Webull account,
+           read-only. Built in accounts.ts. -->
+      <div id="accounts-view" class="view" hidden></div>
     </main>
 
     <aside id="detail" class="pane brackets" hidden></aside>

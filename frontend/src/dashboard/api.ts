@@ -737,3 +737,29 @@ export async function getDebate(): Promise<DebateStatus> {
 export async function startDebateRound(): Promise<void> {
   await fetch("/api/debate/round", { method: "POST" });
 }
+
+/**
+ * Brokerage accounts (`/api/accounts`), read-only: each paper bot's Alpaca
+ * account and the user's Webull account. accounts.py held every name and
+ * symbol to a pattern; null means the broker didn't say.
+ */
+export interface BrokerPosition {
+  instrument: string; qty: number | null; side: "long" | "short";
+  avg_price: number | null; price: number | null; value: number | null;
+  pl: number | null; pl_pct: number | null; stop: number | "trailing" | null;
+}
+
+export interface BrokerAccount {
+  broker: "alpaca" | "webull" | "tradier"; bot: string; slot: number | null; account: string;
+  status: "ok" | "refused" | "unreachable" | "no_key" | "no_sdk";
+  equity?: number | null; cash?: number | null; day_pl?: number | null;
+  open_orders?: number | null; positions: BrokerPosition[];
+}
+
+export interface AccountsStatus {
+  enabled: boolean; updated: number; accounts: BrokerAccount[];
+}
+
+export async function getAccounts(): Promise<AccountsStatus> {
+  return get<AccountsStatus>("/api/accounts");
+}

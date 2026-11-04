@@ -273,6 +273,10 @@ SAMPLES = {
     "SKILL_NAME_RE": "parse_dates",
     "TAG_RE": "trend:flat",
     "NAME_RE": "dip_bounce",
+    "ACCOUNT_RE": "PA0TEST01",
+    "OPTION_RE": "AAPL261218C00200000",
+    "OCC_RE": "SPY261120C00685000",
+    "CRYPTO_RE": "BTC/USD",
 }
 
 ALPHABET = ("abcdefghijklmnopqrstuvwxyz0123456789"
