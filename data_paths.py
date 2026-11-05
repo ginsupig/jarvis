@@ -134,6 +134,7 @@ KNOWN_TEMPLATE_HASHES = frozenset({
     "f8ed2572a0d7384cdd1f5a06a73018146e74e9964385972a34c50076a7de7912",  # lessons approved mid-conversation arrive as a note
     "21057a2ddba2b143979890856192e602a481742d6451ded01ffa3ae461f296ae",  # the Learning tab beside options and trade suggestions
     "8737aaa56e643944eae5b6e73f470d581fd701d35701e3bb04d32cdc8f20aa1b",  # the empire study beside options and trade suggestions
+    "4fd5f74994642cae142a5b7a216bab95eed2db686f5f3b4fdd39cac4dfc6a5c1",  # direct advice, exit plans, and the bot audit
     "7854023f5366db4e97d9e750e6cdeaa62063b48146bda4d877aa97fa26ac2e57",  # MegaEmpire: look, never trade
 })
 

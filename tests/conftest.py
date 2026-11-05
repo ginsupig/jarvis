@@ -32,6 +32,8 @@ def _never_read_the_real_fleet(monkeypatch, tmp_path):
     # Nor run the real watchdog, which restarts processes.
     monkeypatch.setenv("JARVIS_FLEET_WATCHDOG", str(tmp_path / "fleet" / "no_watchdog.py"))
     monkeypatch.setenv("JARVIS_FLEET_WATCH_REPORT", str(tmp_path / "fleet" / "watch_report.json"))
+    monkeypatch.setenv("JARVIS_FLEET_SOURCES", str(tmp_path / "fleet" / "sources"))
+    monkeypatch.setenv("JARVIS_FLEET_RUNTIMES", str(tmp_path / "fleet" / "paper_runtimes.json"))
 
 
 @pytest.fixture(autouse=True)

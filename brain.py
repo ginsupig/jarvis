@@ -96,6 +96,7 @@ ALLOWED_TOOLS = [
     "mcp__jarvis__options_study",
     "mcp__jarvis__trade_plan",
     "mcp__jarvis__trade_record",
+    "mcp__jarvis__bot_audit",
     "mcp__jarvis__debate_scorecard",
     "mcp__jarvis__debate_round",
     "mcp__jarvis__empire_status",

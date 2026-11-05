@@ -291,7 +291,20 @@ JARVIS builds**. It is only this repository's own copies that are gone.
   against later realised vol. `trade_plan.py`: tools `trade_plan` (levels,
   bias, entries, stop, targets, option contract or debit spread; scans the
   followed list without a symbol) and `trade_record`; every suggestion is
-  saved to trade_ideas and scored on daily bars after the close. No orders
+  saved to trade_ideas and scored on daily bars after the close, both the
+  plain exit (result_r) and the managed one (result_managed: half at T1,
+  stop to entry, ATR trail, stale exit). After 20 finished, the record ranks
+  entries and picks the exit. The persona gives direct advice (the user
+  accepted on 2026-11-04 that JARVIS is not a licensed adviser). No orders
+- `JARVIS_FLEET_SOURCES` / `JARVIS_FLEET_RUNTIMES` (optional; default
+  `C:/MegaEmpire/runtime/sources`, `C:/MegaEmpire/config/paper_runtimes.json`)
+  — `bot_audit.py`: weaknesses in the fleet's completed trades (churn,
+  re-entry, costs, tail loss, past-stop and gave-back from stored 15-minute
+  bars, losing verdict), the functions in each bot's live import closure
+  (from its `preflight` entry) that decide them, and order-path checks
+  (swallowed exceptions, no timeout, keys in code — location only). Parses
+  with `ast`, never runs or writes bot code. Tool `bot_audit`; after each
+  close new weaknesses go to bot_audits and are announced once
 - `JARVIS_LEARNING_AUTO_APPLY` (optional, default off) — put reflected run
   lessons on trial without approval, and adopt improved versions of approved
   skills that pass their full suite and gain no new module. Brain lessons and

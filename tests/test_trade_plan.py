@@ -101,3 +101,65 @@ def test_tool_refuses_a_non_ticker_and_scans_without_one():
     assert said == "That isn't a ticker I can plan for."
     said = asyncio.run(server.tool_trade_plan({}))
     assert "Nothing on my list" in said
+
+
+def test_a_farther_entry_is_less_likely_to_fill_and_the_record_can_outrank_reward():
+    near, far = {"kind": "pullback", "entry": 99.0}, {"kind": "pullback", "entry": 90.0}
+    assert trade_plan.fill_chance({"kind": "market", "entry": 100.0}, 100.0, 10.0) == 1.0
+    assert trade_plan.fill_chance(near, 100.0, 10.0) > trade_plan.fill_chance(far, 100.0, 10.0) >= 0.33
+    s = series()
+    p = trade_plan.plan(s, s.c[-1], "long", "swing")
+    for e in p["entries"]:
+        assert e["score"] == round(e["fill"] * e["rr"], 3) and e["exit"]["t1"] == e["targets"][0]
+    kinds = [e["kind"] for e in p["entries"]]
+    if len(kinds) > 1:
+        learned = {k: (5.0 if k == kinds[-1] else -1.0) for k in kinds}
+        q = trade_plan.plan(s, s.c[-1], "long", "swing", learned=learned)
+        assert q["best"]["kind"] == kinds[-1] or not q["entries"][-1]["ok"]
+
+
+def test_managed_exit_banks_half_then_trails_or_stalls():
+    idea = {"day": "2026-11-02", "direction": "long", "entry": 100.0, "stop": 98.0, "target": 104.0,
+            "target2": 108.0, "atr": 1.0, "hold": 6, "kind": "pullback", "style": "swing"}
+    bar = lambda t, o, h, l, c: {"t": t, "o": o, "h": h, "l": l, "c": c}
+    # half at 104 (+2R on half = +1R), the rest at 108 (+4R on half = +2R): +3R
+    run = [bar("2026-11-03", 100, 101, 99.5, 100.5), bar("2026-11-04", 101, 104.5, 100.5, 104),
+           bar("2026-11-05", 104, 108.5, 103.5, 108)]
+    assert trade_plan.resolve_managed(idea, "2026-11-03", run) == 3.0
+    # half at 104 (+1R), then the trail (best close 104 - 2 ATR = 102) takes the rest (+0.5R)
+    back = run[:2] + [bar("2026-11-05", 103, 103.5, 101.5, 102)]
+    assert trade_plan.resolve_managed(idea, "2026-11-03", back) == 1.5
+    # never makes half an R by session 3 of 6: out at that close
+    stall = [bar(f"2026-11-0{d}", 100, 100.6, 99.5, 100.4) for d in (3, 4, 5)]
+    assert trade_plan.resolve_managed(idea, "2026-11-03", stall) == 0.2
+    # straight to the stop: the whole position, -1R
+    assert trade_plan.resolve_managed(idea, "2026-11-03", [bar("2026-11-03", 100, 100.5, 97, 98)]) == -1.0
+    assert trade_plan.resolve_managed(dict(idea, target2=None), "2026-11-03", run) is None
+
+
+def test_both_exits_are_scored_and_the_better_one_is_preferred_after_twenty():
+    s = series()
+    p = trade_plan.plan(s, s.c[-1], "long", "swing")
+    bars = [{"t": "2026-11-03", "o": 100, "h": 101, "l": 99.5, "c": 100.5},
+            {"t": "2026-11-04", "o": 101, "h": 104.5, "l": 100.5, "c": 104},
+            {"t": "2026-11-05", "o": 104, "h": 108.5, "l": 103.5, "c": 108}]
+    for i in range(trade_plan.LEARN_MIN):
+        p["entries"] = [dict(p["entries"][0], ok=True, kind="market", entry=100.0, stop=98.0,
+                             targets=[104.0, 108.0])]
+        p["atr"] = 1.0
+        trade_plan.record(f"T{i}", "2026-11-02", p, edge=False)
+    trade_plan.score_ideas(load=lambda sym: bars)
+    t = trade_plan.track_record()
+    assert t["exits"]["n"] == trade_plan.LEARN_MIN and t["exits"]["managed"] > t["exits"]["fixed"]
+    assert trade_plan.exit_preference() == "managed"
+    assert "managed exit" in trade_plan.describe_record()
+
+
+def test_the_verdict_never_says_full_size_without_an_edge():
+    best = {"kind": "pullback", "rr": 3.0}
+    strong = {"direction": "long", "edge": False, "score": 4}
+    assert "half your normal size" in trade_plan._verdict(strong, "long", best)
+    assert "I'd pass" in trade_plan._verdict(strong, "short", best)
+    assert "either way" in trade_plan._verdict({"direction": "", "edge": False, "score": 0}, "long", best)
+    assert "I'd take it" in trade_plan._verdict(dict(strong, edge=True), "long", best)
+    assert "not a licensed adviser" in trade_plan.ADVICE_NOTE
