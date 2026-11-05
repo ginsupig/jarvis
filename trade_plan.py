@@ -13,7 +13,17 @@
     plan      entries at the nearest level (a pullback limit, or a breakout
               stop-entry) or at the market, a stop beyond the next level by
               ATR, targets at the next levels, and the reward against the
-              risk. Under 1.5 to 1 the plan says to skip it
+              risk. Under 1.5 to 1 the plan says to skip it. The best entry
+              is the one most likely to pay: its reward, weighted by how
+              likely a resting order that far away is to fill, and, once
+              twenty of that kind have finished, by what that kind has
+              actually returned
+    exits     a managed exit beside the plain one: half at the first target,
+              the stop to the entry, the rest trailed by ATR to the second
+              target, and out early if it hasn't moved half an R by halfway
+              through the holding period. Both are scored on every
+              suggestion, and once twenty have finished the plan leads with
+              the one that has done better
     options   the expiration that covers the holding period, the contract
               near the delta the style wants that has a tight spread and open
               interest, or a debit spread when options are rich, with the
@@ -25,7 +35,8 @@
               tally, by style and setup, and it is what JARVIS says when asked
               how good his suggestions are
 
-Nothing here can place an order. The user decides; JARVIS suggests.
+Nothing here can place an order. JARVIS advises — the user has accepted that
+JARVIS is not a licensed adviser, and the risk — and the user decides.
 """
 from __future__ import annotations
 
@@ -43,13 +54,18 @@ log = logging.getLogger("jarvis.trade_plan")
 
 MIN_RR = 1.5
 STYLES = {
-    # holding sessions, stop in ATRs beyond the level, option delta, option days
-    "day":   {"hold": 1, "stop_atr": 0.5, "delta": 0.50, "dte": (1, 7), "near_atr": 1.0},
-    "swing": {"hold": 10, "stop_atr": 1.0, "delta": 0.60, "dte": (21, 60), "near_atr": 2.0},
+    # holding sessions, stop in ATRs beyond the level, option delta, option days,
+    # how far away an entry may rest, and the trail for the managed exit's runner
+    "day":   {"hold": 1, "stop_atr": 0.5, "delta": 0.50, "dte": (1, 7), "near_atr": 1.0,
+              "trail_atr": 1.0},
+    "swing": {"hold": 10, "stop_atr": 1.0, "delta": 0.60, "dte": (21, 60), "near_atr": 2.0,
+              "trail_atr": 2.0},
 }
 FILL_SESSIONS = 3               # an unfilled entry is dropped after this many sessions
 MAX_SPREAD = 0.10               # option spread as a fraction of its mid
 MIN_OI = 100
+LEARN_MIN = 20                  # finished suggestions before the record steers the plan
+STALE_R = 0.5                   # the managed exit leaves at halfway if it hasn't made this
 
 
 # ── bars ────────────────────────────────────────────────────────────────────
@@ -180,8 +196,36 @@ def _targets(entry: float, risk: float, side: int, beyond: list[dict]) -> list[f
     return [round(x, 2) for x in t]
 
 
+def fill_chance(e: dict, price: float, near: float) -> float:
+    """How likely a resting entry is to fill: certain at the market, falling
+    to a third at the farthest distance the style lets an entry rest."""
+    if e["kind"] == "market" or near <= 0:
+        return 1.0
+    return max(0.33, 1.0 - 0.67 * min(1.0, abs(e["entry"] - price) / near))
+
+
+def learned_r(style: str) -> dict[str, float]:
+    """Average R by entry kind, for kinds with LEARN_MIN finished suggestions."""
+    try:
+        groups = track_record()["groups"]
+    except Exception:
+        return {}
+    return {key.split(" ")[1]: g["r"] / g["n"] for key, g in groups.items()
+            if key.startswith(style + " ") and "edge" not in key and g["n"] >= LEARN_MIN}
+
+
+def exit_plan(e: dict, side: int, a: float, style: str, hold: int) -> dict:
+    cfg = STYLES[style]
+    risk = abs(e["entry"] - e["stop"])
+    return {"stop": e["stop"], "t1": e["targets"][0], "t2": e["targets"][1],
+            "trail": round(cfg["trail_atr"] * a, 2),
+            "stale_by": max(1, hold // 2), "stale_at": round(e["entry"] + side * STALE_R * risk, 2),
+            "hold": hold}
+
+
 def plan(s: market.Series, price: float, direction: str, style: str = "swing",
-         opt: dict | None = None, risk_dollars: float | None = None) -> dict:
+         opt: dict | None = None, risk_dollars: float | None = None,
+         learned: dict | None = None) -> dict:
     cfg = STYLES[style]
     lv = levels(s, price, opt)
     a, side = lv["atr"], 1 if direction == "long" else -1
@@ -193,13 +237,13 @@ def plan(s: market.Series, price: float, direction: str, style: str = "swing",
         lvl = behind[0]
         entries.append({"kind": "pullback", "entry": lvl["px"],
                         "stop": lvl["px"] - side * cfg["stop_atr"] * a,
-                        "how": f"a limit at {lvl['px']:.2f} ({', '.join(lvl['why'][:3])})"})
+                        "how": f"a limit at {lvl['px']:.2f} ({', '.join(lvl['why'][:2])})"})
     if ahead and abs(ahead[0]["px"] - price) <= near:
         lvl = ahead[0]
         entry = lvl["px"] + side * 0.1 * a
         entries.append({"kind": "breakout", "entry": entry,
                         "stop": lvl["px"] - side * cfg["stop_atr"] * a,
-                        "how": f"a stop order through {lvl['px']:.2f} ({', '.join(lvl['why'][:3])})"})
+                        "how": f"a stop order through {lvl['px']:.2f} ({', '.join(lvl['why'][:2])})"})
     if not entries:
         entries.append({"kind": "market", "entry": price,
                         "stop": price - side * (1.5 if style == "swing" else 0.75) * a,
@@ -213,7 +257,12 @@ def plan(s: market.Series, price: float, direction: str, style: str = "swing",
         e["ok"] = e["rr"] >= MIN_RR
         if risk_dollars and risk:
             e["shares"] = int(risk_dollars // risk)
-    best = max(entries, key=lambda e: (e["ok"], e["rr"]))
+        e["fill"] = round(fill_chance(e, price, near), 2)
+        e["learned_r"] = (learned or {}).get(e["kind"])
+        pays = e["learned_r"] if e["learned_r"] is not None else e["rr"]
+        e["score"] = round(e["fill"] * pays, 3)
+        e["exit"] = exit_plan(e, side, a, style, cfg["hold"])
+    best = max(entries, key=lambda e: (e["ok"], e["score"], e["rr"]))
     return {"style": style, "direction": direction, "atr": round(a, 2), "levels": lv,
             "entries": entries, "best": best, "hold": cfg["hold"]}
 
@@ -302,6 +351,12 @@ def init_db() -> None:
                 UNIQUE (day, symbol, direction, style, kind)
             );
         """)
+        have = {r["name"] for r in conn.execute("PRAGMA table_info(trade_ideas)")}
+        # Added with the managed exit; rows from before it have no second
+        # target, so only the plain exit is scored for them.
+        for col in ("target2 REAL", "atr REAL", "result_managed REAL"):
+            if col.split()[0] not in have:
+                conn.execute(f"ALTER TABLE trade_ideas ADD COLUMN {col}")
 
 
 def record(symbol: str, day: str, p: dict, edge: bool) -> None:
@@ -311,9 +366,11 @@ def record(symbol: str, day: str, p: dict, edge: bool) -> None:
             if not e["ok"]:
                 continue
             conn.execute("INSERT OR IGNORE INTO trade_ideas (ts, day, symbol, direction, style, kind, "
-                         "entry, stop, target, hold, edge) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                         "entry, stop, target, hold, edge, target2, atr) "
+                         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                          (time.time(), day, symbol, p["direction"], p["style"], e["kind"],
-                          e["entry"], e["stop"], e["targets"][0], p["hold"], int(edge)))
+                          e["entry"], e["stop"], e["targets"][0], p["hold"], int(edge),
+                          e["targets"][1], p["atr"]))
 
 
 def resolve_idea(idea: dict, bars: list) -> Optional[dict]:
@@ -348,12 +405,54 @@ def resolve_idea(idea: dict, bars: list) -> Optional[dict]:
     return {"status": "unfilled"} if len(after) >= FILL_SESSIONS else None
 
 
+def resolve_managed(idea: dict, filled: str, bars: list) -> Optional[float]:
+    """The managed exit on the same fill: half off at the first target with
+    the stop moved to the entry, the rest trailed by ATR from the best close
+    to the second target, out at halfway if it hasn't made STALE_R, and at
+    the holding period's end. A bar that touches a stop and a target counts
+    as the stop. None while the bars don't decide it yet."""
+    if not idea.get("target2") or not idea.get("atr"):
+        return None
+    cfg = STYLES.get(idea["style"], STYLES["swing"])
+    side = 1 if idea["direction"] == "long" else -1
+    after = [b for b in bars if b["t"] >= filled]
+    if not after:
+        return None
+    entry = after[0]["o"] if idea["kind"] == "market" else idea["entry"]
+    risk = abs(entry - idea["stop"])
+    if not risk:
+        return 0.0
+    r = lambda px: side * (px - entry) / risk
+    stop, banked, half, best = idea["stop"], 0.0, False, entry
+    for i, b in enumerate(after):
+        worst_px, best_px = (b["l"], b["h"]) if side == 1 else (b["h"], b["l"])
+        if side * (worst_px - stop) <= 0:
+            return round(banked + (0.5 if half else 1.0) * r(stop), 2)
+        if not half and side * (best_px - idea["target"]) >= 0:
+            banked, half, stop = 0.5 * r(idea["target"]), True, entry
+        if half and side * (best_px - idea["target2"]) >= 0:
+            return round(banked + 0.5 * r(idea["target2"]), 2)
+        best = max(best, b["c"]) if side == 1 else min(best, b["c"])
+        if half:
+            trail = best - side * cfg["trail_atr"] * idea["atr"]
+            stop = max(stop, trail) if side == 1 else min(stop, trail)
+        held = i + 1
+        if not half and held == max(1, idea["hold"] // 2) and idea["hold"] > 1 \
+                and r(b["c"]) < STALE_R:
+            return round(r(b["c"]), 2)
+        if held >= idea["hold"]:
+            return round(banked + (0.5 if half else 1.0) * r(b["c"]), 2)
+    return None
+
+
 def score_ideas(load=None) -> int:
-    """After a close: settle every open suggestion the bars now decide."""
+    """After a close: settle every open suggestion the bars now decide, and
+    the managed exit of each filled one."""
     init_db()
     with closing(market._connect()) as conn:
         open_ideas = [dict(r) for r in conn.execute(
-            "SELECT * FROM trade_ideas WHERE status IN ('open', 'filled')")]
+            "SELECT * FROM trade_ideas WHERE status IN ('open', 'filled') OR (status IN "
+            "('won', 'lost', 'closed') AND result_managed IS NULL AND target2 IS NOT NULL)")]
     if not open_ideas:
         return 0
     load = load or (lambda sym: market.load_bars("1Day", [sym]).get(sym) or [])
@@ -368,6 +467,11 @@ def score_ideas(load=None) -> int:
                 except Exception:
                     bars_by[sym] = []
             got = resolve_idea(idea, bars_by[sym])
+            managed = (resolve_managed(idea, got["filled"], bars_by[sym])
+                       if got and got.get("filled") else None)
+            if managed is not None:
+                conn.execute("UPDATE trade_ideas SET result_managed=? WHERE id=?",
+                             (managed, idea["id"]))
             if got is None or (got["status"] == idea["status"] and got.get("filled") == idea["filled"]):
                 continue
             conn.execute("UPDATE trade_ideas SET status=?, filled=?, result_r=? WHERE id=?",
@@ -380,8 +484,9 @@ def track_record() -> dict:
     init_db()
     with closing(market._connect()) as conn:
         rows = [dict(r) for r in conn.execute(
-            "SELECT style, kind, edge, status, result_r FROM trade_ideas")]
+            "SELECT style, kind, edge, status, result_r, result_managed FROM trade_ideas")]
     done = [r for r in rows if r["status"] in ("won", "lost", "closed")]
+    both = [r for r in done if r["result_managed"] is not None]
     out = {"suggested": len(rows), "open": sum(r["status"] in ("open", "filled") for r in rows),
            "unfilled": sum(r["status"] == "unfilled" for r in rows), "done": len(done), "groups": {}}
     for r in done:
@@ -393,7 +498,22 @@ def track_record() -> dict:
     if done:
         out["win_rate"] = sum(1 for r in done if (r["result_r"] or 0) > 0) / len(done)
         out["avg_r"] = sum(r["result_r"] or 0 for r in done) / len(done)
+    if both:
+        out["exits"] = {"n": len(both),
+                        "fixed": sum(r["result_r"] or 0 for r in both) / len(both),
+                        "managed": sum(r["result_managed"] for r in both) / len(both)}
     return out
+
+
+def exit_preference() -> str:
+    """'managed' or 'fixed' once LEARN_MIN suggestions have both scores; '' before."""
+    try:
+        ex = track_record().get("exits")
+    except Exception:
+        return ""
+    if not ex or ex["n"] < LEARN_MIN:
+        return ""
+    return "managed" if ex["managed"] > ex["fixed"] else "fixed"
 
 
 def describe_record() -> str:
@@ -407,7 +527,12 @@ def describe_record() -> str:
                      f"{t['avg_r']:+.2f}R per trade.")
         for key, g in sorted(t["groups"].items(), key=lambda kv: -kv[1]["n"]):
             lines.append(f"  {key}: {g['n']} trades, {g['won']} winners, {g['r'] / g['n']:+.2f}R average.")
-        if t["done"] < 20:
+        ex = t.get("exits")
+        if ex:
+            lines.append(f"Exits, on the {ex['n']} scored both ways: taking it all at the first "
+                         f"target averaged {ex['fixed']:+.2f}R; the managed exit (half there, the "
+                         f"rest trailed) averaged {ex['managed']:+.2f}R.")
+        if t["done"] < LEARN_MIN:
             lines.append("That's too few to call it skill yet; I'd want twenty or more.")
     return "\n".join(lines)
 
@@ -415,7 +540,7 @@ def describe_record() -> str:
 # ── what the user hears ─────────────────────────────────────────────────────
 
 def _lvl(z: dict) -> str:
-    return f"{z['px']:.2f} ({', '.join(z['why'][:2])}{'; strong' if z['strength'] >= 3 else ''})"
+    return f"{z['px']:.2f} ({z['why'][0]}{', strong' if z['strength'] >= 3 else ''})"
 
 
 def _regime_and_spy() -> tuple[str, Optional[market.Series]]:
@@ -477,27 +602,32 @@ def suggest(symbol: str, direction: str = "", style: str = "swing", instrument: 
                      if b["direction"] else "; the evidence doesn't lean either way."))
     lv = levels(s, price, opt)
     if lv["resistance"]:
-        lines.append("Resistance: " + ", ".join(_lvl(z) for z in lv["resistance"][:3]) + ".")
+        lines.append("Resistance: " + ", ".join(_lvl(z) for z in lv["resistance"][:2]) + ".")
     if lv["support"]:
-        lines.append("Support: " + ", ".join(_lvl(z) for z in lv["support"][:3]) + ".")
+        lines.append("Support: " + ", ".join(_lvl(z) for z in lv["support"][:2]) + ".")
     if not chosen:
         lines.append("No trade from me: the trend, the market and the patterns don't agree. "
                      "If you want a side anyway, ask for the long or the short plan.")
         return "\n".join(lines)
-    p = plan(s, price, chosen, style, opt, risk_dollars)
+    p = plan(s, price, chosen, style, opt, risk_dollars, learned_r(style))
     word = "Buy" if chosen == "long" else "Sell short"
-    for e in p["entries"]:
-        lines.append(f"{e['kind'].capitalize()}: {word.lower()} with {e['how']}; stop {e['stop']:.2f}; "
-                     f"targets {e['targets'][0]:.2f} then {e['targets'][1]:.2f}; reward {e['rr']:.1f} to 1"
-                     + (f"; {e['shares']} shares for your risk" if e.get("shares") else "")
-                     + ("" if e["ok"] else " — skip it, the reward is too small for the risk") + ".")
     best = p["best"]
     if best["ok"]:
-        exit_rule = ("Out by the close whatever happens." if style == "day" else
-                     f"Take half at the first target and move the stop to the entry; otherwise "
-                     f"close it after {p['hold']} sessions.")
-        lines.append(f"My pick is the {best['kind']}. {exit_rule}")
-    else:
+        why = (f"my finished {best['kind']}s have averaged {best['learned_r']:+.2f}R"
+               if best["learned_r"] is not None else "most reward once the fill odds count")
+        lines.append(f"Best entry, the {best['kind']} ({why}): {word.lower()} with {best['how']}; "
+                     f"stop {best['stop']:.2f}; targets {best['targets'][0]:.2f} then "
+                     f"{best['targets'][1]:.2f}; reward {best['rr']:.1f} to 1"
+                     + (f", about {100 * best['fill']:.0f}% likely to fill" if best["kind"] != "market" else "")
+                     + (f"; {best['shares']} shares for your risk" if best.get("shares") else "") + ".")
+        lines.append(_exit_text(best, style, exit_preference()))
+    for e in p["entries"]:
+        if e is best and e["ok"]:
+            continue
+        lines.append(f"{'Other' if e['ok'] else 'Skip the'} {e['kind']}: {e['entry']:.2f}, stop "
+                     f"{e['stop']:.2f}, {e['rr']:.1f} to 1"
+                     + (f", {100 * e['fill']:.0f}% to fill" if e["kind"] != "market" else "") + ".")
+    if not best["ok"]:
         lines.append("None of these pays enough for its risk; I'd wait for a better level.")
     if instrument in ("options", "both") and opt and best["ok"]:
         try:
@@ -509,32 +639,80 @@ def suggest(symbol: str, direction: str = "", style: str = "swing", instrument: 
         else:
             lines.append(
                 f"Options: the {oc['expiration']} {oc['strike']:g} {oc['type']} ({oc['dte']} days), "
-                f"{oc['bid']:.2f} bid / {oc['ask']:.2f} ask, delta {oc['delta']:.2f}, losing "
-                f"{abs(oc['theta']):.2f} a day to time; breakeven at expiry {oc['breakeven']:.2f}. "
-                f"Estimated about {oc['at_entry']:.2f} when the entry fills, {oc['at_t1']:.2f} at the "
-                f"first target and {oc['at_stop']:.2f} at the stop, so roughly "
-                f"${oc['risk_per']:.0f} at risk per contract" + _contracts(risk_dollars, oc['risk_per'])
-                + ". Those are estimates from the greeks, not quotes.")
+                f"{oc['bid']:.2f}/{oc['ask']:.2f}, delta {oc['delta']:.2f}, losing "
+                f"{abs(oc['theta']):.2f} a day; breakeven {oc['breakeven']:.2f}. By the greeks "
+                f"~{oc['at_entry']:.2f} at the entry, {oc['at_t1']:.2f} at the first target, "
+                f"{oc['at_stop']:.2f} at the stop: ${oc['risk_per']:.0f} risk per contract"
+                + _contracts(risk_dollars, oc['risk_per']) + ".")
             sp = oc.get("spread")
             if sp:
-                lines.append(f"Options are rich here, so a debit spread is cheaper: buy the {oc['strike']:g}, "
-                             f"sell the {sp['short_strike']:g}, about {sp['cost']:.2f} for up to "
-                             f"{sp['max_gain']:.2f} more.")
+                lines.append(f"Options are rich: the {oc['strike']:g}/{sp['short_strike']:g} {oc['type']} "
+                             f"spread costs about {sp['cost']:.2f} to make up to {sp['max_gain']:.2f}.")
+            lines.append(_option_exit_text(oc, best))
     elif instrument in ("options", "both") and not opt:
         lines.append("Options: I couldn't read the chain just now.")
     if b["edge"]:
         lines.append("A confirmed pattern from my study stands behind this side.")
-    else:
-        lines.append("No confirmed pattern stands behind it: this is a levels-and-trend plan, not a "
-                     "tested edge.")
+    elif not best["ok"]:
+        lines.append("No confirmed pattern stands behind it.")
+    if best["ok"]:
+        lines.append(_verdict(b, chosen, best))
     if save:
         try:
             record(symbol, (market.get_state("snapshot") or {}).get("session", {}).get("day")
                    or market.to_et(datetime.now(timezone.utc)).date().isoformat(), p, b["edge"])
         except Exception:
             log.warning("could not record the suggestion", exc_info=True)
-    lines.append("It's a suggestion — you decide, and I don't place it.")
+    lines.append(ADVICE_NOTE)
     return "\n".join(lines)
+
+
+ADVICE_NOTE = "My advice, not a licensed adviser's: your call, your risk, your order."
+
+
+def _exit_text(e: dict, style: str, prefer: str) -> str:
+    x = e["exit"]
+    managed = (f"Exit: stop {x['stop']:.2f}; half off at {x['t1']:.2f}, stop to "
+               f"{e['entry']:.2f}, trail the rest {x['trail']:.2f} behind the best close to "
+               f"{x['t2']:.2f}.")
+    if style == "day":
+        managed += " Out by the close regardless."
+    else:
+        managed += (f" Not past {x['stale_at']:.2f} in {x['stale_by']} sessions, close it; out "
+                    f"after {x['hold']} regardless.")
+    if prefer == "fixed":
+        return (f"Exit: stop {x['stop']:.2f}, all of it off at {x['t1']:.2f} — my record says "
+                f"taking the whole first target has paid better than trailing; out after "
+                f"{x['hold']} session{'s' if x['hold'] != 1 else ''} either way.")
+    if prefer == "managed":
+        managed += " My record says this has paid better than taking it all at once."
+    return managed
+
+
+def _option_exit_text(oc: dict, e: dict) -> str:
+    """Exit the option on the stock's levels, with the two ways an option
+    loses that the stock doesn't: time and volatility."""
+    late = 21 if oc["dte"] >= 30 else max(1, oc["dte"] // 3)
+    text = (f"Option exits: follow the stock's stop and targets; out early if it loses half its "
+            f"premium; never into its last {late} day{'s' if late != 1 else ''}.")
+    if oc.get("spread"):
+        text += " Take the spread at 60% of its maximum."
+    return text
+
+
+def _verdict(b: dict, chosen: str, best: dict) -> str:
+    if b["direction"] != chosen:
+        lean = "leans the other way" if b["direction"] else "doesn't lean either way"
+        return (f"My call: I'd pass — the evidence {lean}. If you take it anyway, keep it small "
+                f"and keep the stop.")
+    if b["edge"]:
+        return (f"My call: I'd take it, at the {best['kind']} entry — the trend and a confirmed "
+                f"pattern agree.")
+    if best["rr"] >= 2.5 and abs(b["score"]) >= 3:
+        return (f"My call: take the {best['kind']} at half your normal size — trend and reward "
+                f"are good, but it isn't a tested edge yet.")
+    return (f"My call: marginal; if you take the {best['kind']}, use a quarter of your normal "
+            f"size — it isn't a tested edge.")
 
 
 def scan(style: str = "swing", limit: int = 3) -> str:

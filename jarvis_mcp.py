@@ -977,9 +977,13 @@ TOOL_SPECS = [
             "A suggested trade: support and resistance levels, the bias (trend, relative "
             "strength, market regime, confirmed patterns), entries (pullback limit, "
             "breakout stop-entry, or at the market), the stop, two targets, reward to "
-            "risk, and an option contract (or a debit spread when options are rich) with "
-            "premium, delta, time decay, breakeven and estimated value at the stop and "
-            "target. Says 'no trade' when the evidence doesn't line up. Without `symbol` "
+            "risk, the best entry (reward weighted by the chance of filling and, once "
+            "there is a record, by what that kind of entry has returned), a full exit "
+            "plan (stop, half off at the first target, stop to the entry, a trailed "
+            "runner, a time stop), your verdict and size, and an option contract (or a "
+            "debit spread when options are rich) with premium, delta, time decay, "
+            "breakeven, estimated value at the stop and target, and option exit rules. "
+            "Says 'no trade' when the evidence doesn't line up. Without `symbol` "
             "it scans the followed list for the clearest plans. Use it for 'should I buy "
             "NVDA', 'give me levels on AMD', 'what option would you use', 'where would "
             "you get in and out', 'any good setups'. It never places an order."),
@@ -998,9 +1002,25 @@ TOOL_SPECS = [
         "description": (
             "Your track record as a suggester: every trade_plan entry you suggested, "
             "scored after the close on what the price did (filled or not, stop or target "
-            "first), win rate and average R, by style and setup. Use it for 'how good are "
+            "first), win rate and average R, by style and setup, and the managed exit "
+            "against taking it all at the first target. Use it for 'how good are "
             "your picks', 'how have your suggestions done'."),
         "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "bot_audit",
+        "description": (
+            "Audit the paper fleet's trading bots: weaknesses their completed trades show "
+            "(churn, repeated entries, costs eating the edge, outsized losses, losses run "
+            "past where a stop belongs, winners given back, a losing verdict), and for one "
+            "bot the functions in its running code that decide each weakness, as "
+            "file:line, plus swallowed exceptions or missing timeouts on its order path and "
+            "keys written into the code. Read-only. Without `bot` it lists every bot's "
+            "weaknesses; with one, the evidence and where to look — then read those "
+            "functions with read_file before saying what's wrong. Use it for 'audit the "
+            "bots', 'what's wrong with omegatrader', 'why does orb_elite lose'."),
+        "inputSchema": {"type": "object", "properties": {
+            "bot": {"type": "string", "description": "A fleet bot's name, e.g. omegatrader. Omit for all."}}},
     },
     {
         "name": "market_refresh",

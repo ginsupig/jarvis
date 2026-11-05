@@ -105,6 +105,7 @@ import fleet_study
 import news
 import options
 import trade_plan
+import bot_audit
 import debate
 import market
 import notifier
@@ -7113,6 +7114,13 @@ async def _fleet_study_loop() -> None:
             raise
         except Exception:
             log.warning("options record failed", exc_info=True)
+        try:
+            for line in await _bot_audit_once():
+                await _post(line, "Bot audit")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("bot audit failed", exc_info=True)
         await asyncio.sleep(600)
 
 
@@ -7174,8 +7182,32 @@ async def tool_trade_record(args: dict) -> str:
     return await asyncio.to_thread(trade_plan.describe_record)
 
 
+# Auditing the bots. bot_audit.py finds weaknesses in the fleet's completed
+# trades and names the functions in each bot's running copy that decide
+# them, as paths and identifiers; no code text comes back. It reads, never
+# writes; the brain reads the functions with read_file, which taints.
+
+async def tool_bot_audit(args: dict) -> str:
+    raw = _plain_name(str(args.get("bot") or "").strip(), "")
+    bot = fleet.clean(raw)
+    if raw and not bot:
+        return "That isn't a bot name I know."
+    return await asyncio.to_thread(bot_audit.describe, bot)
+
+
+async def _bot_audit_once(force: bool = False) -> list[str]:
+    """After a close: re-run the evidence and announce a weakness once."""
+    session = (market.get_state("snapshot") or {}).get("session") or {}
+    day = session.get("day") or ""
+    if session.get("state") != "done" or not day:
+        return []
+    if not force and (market.get_state("bot_audit_watched") or {}).get("day") == day:
+        return []
+    return await asyncio.to_thread(bot_audit.watch, day)
+
+
 TOOL_HANDLERS.update({"options_study": tool_options_study, "trade_plan": tool_trade_plan,
-                      "trade_record": tool_trade_record})
+                      "trade_record": tool_trade_record, "bot_audit": tool_bot_audit})
 TAINT_EXEMPT_TOOLS.update({
     "options_study": (
         "it reports numbers options.py computed from option quotes, in sentences it "
@@ -7185,6 +7217,10 @@ TAINT_EXEMPT_TOOLS.update({
         "option quotes, in its own sentences; tickers held to market.SYMBOL_RE and "
         "pattern labels from market.PATTERNS"),
     "trade_record": "it reports trade_plan.py's tally of its own suggestions, as counts",
+    "bot_audit": (
+        "it reports bot_audit.py's sentences about numbers it computed from the fleet's "
+        "trades; bot names held to fleet.NAME_RE, function names to bot_audit.IDENT_RE "
+        "and paths to bot_audit.PATH_RE — no code text, comment or string from a bot"),
 })
 
 TOOL_HANDLERS.update({"broker_accounts": tool_broker_accounts, "market_news": tool_market_news,
