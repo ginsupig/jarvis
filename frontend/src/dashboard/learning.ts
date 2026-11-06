@@ -14,8 +14,9 @@
  * model has reflected, neither of which the dashboard hears about. It polls,
  * and re-fetches when the tab is opened and after every action.
  */
+import { paintCurve } from "./curve";
 import {
-  getLearning, approveLearning, retireLearning, ApiError,
+  getLearning, getLearningCurve, approveLearning, retireLearning, ApiError,
   type LearningSnapshot, type LearnedLesson, type LearnedSkill,
 } from "./api";
 import { el, row, button, pill, emptyState, kv } from "./ui";
@@ -254,6 +255,21 @@ async function reconcile(): Promise<void> {
   paintActive(snap.active);
   paintSkills(snap.skills);
   paintActivity(snap.activity);
+  void paintCurveSection();
+}
+
+/** Its own fetch, so a curve that cannot be computed never blanks the rest. */
+async function paintCurveSection(): Promise<void> {
+  const holder = byId("learning-curve");
+  if (!holder) return;
+  try {
+    paintCurve(holder, await getLearningCurve());
+  } catch (e) {
+    if (!(e instanceof ApiError && e.status === 404)) {
+      console.error("[learning] curve fetch failed", e);
+    }
+    holder.replaceChildren(emptyState("Cannot read the learning curve just now.", true));
+  }
 }
 
 export function initLearning(): void {
