@@ -702,7 +702,9 @@ TOOL_SPECS = [
             "What you have learned from past work: lessons in use and how reliable "
             "each has proved, lessons waiting for the user's approval, skills you "
             "have written, and whether the local model that does the learning is "
-            "up. Use it for 'what have you learned', 'what's waiting for me', and "
+            "up — and, from the control group, whether your lessons measurably make "
+            "runs succeed more often. Use it for 'what have you learned', 'is your "
+            "learning working', 'what's waiting for me', and "
             "before approving or retiring anything — the user approves by number."),
         "inputSchema": {"type": "object", "properties": {}},
     },

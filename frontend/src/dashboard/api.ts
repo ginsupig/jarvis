@@ -335,6 +335,52 @@ async function postLearning(action: "approve" | "retire", ref: string): Promise<
   return body.said;
 }
 
+/** One arm of the control group, or one week's slice of it. */
+export interface ArmStats {
+  runs: number;
+  succeeded: number;
+  /** 0..1, or null with no decided runs. */
+  rate: number | null;
+}
+
+export type CurveVerdict = "not_enough_data" | "helping" | "hurting" | "no_measurable_effect";
+
+export interface CurveWeek {
+  /** YYYY-MM-DD of the week's Monday. */
+  week: string;
+  treated: ArmStats;
+  holdout: ArmStats;
+  none: ArmStats;
+  skill_calls: { calls: number; succeeded: number; rate: number | null };
+  learned: number;
+  retired: number;
+}
+
+/** `/api/learning/curve`: whether the lessons measurably help (learning_curve.py). */
+export interface LearningCurve {
+  holdout_rate: number;
+  min_per_arm: number;
+  overall: {
+    treated: ArmStats;
+    holdout: ArmStats;
+    /** treated rate minus holdout rate, with its 95% interval; null until both arms have runs. */
+    lift: number | null;
+    low: number | null;
+    high: number | null;
+    verdict: CurveVerdict;
+    /** Decided runs still wanted before any verdict. */
+    needed: number;
+  };
+  no_lessons: ArmStats;
+  weeks: CurveWeek[];
+  /** The one sentence JARVIS would say about it. */
+  said: string;
+}
+
+export async function getLearningCurve(): Promise<LearningCurve> {
+  return get<LearningCurve>("/api/learning/curve");
+}
+
 export function approveLearning(ref: string): Promise<string> {
   return postLearning("approve", ref);
 }

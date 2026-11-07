@@ -43,6 +43,13 @@
   --signal-bad:      #ff5a6e;
   --signal-idle:     #7f8fa6;
 
+  /* -- Chart series. Categorical identity, never state: validated together
+        on --ground with the dataviz six checks (lightness band, chroma,
+        CVD and normal-vision separation, contrast) — all pass. Slot 2 is
+        also drawn dashed, so the pair never rests on colour alone. ------ */
+  --series-1:        #3987e5;
+  --series-2:        #d95926;
+
   /* -- Text -------------------------------------------------------------- */
   --text:            #dbe8f5;
   --text-dim:        rgba(219, 232, 245, 0.55);
