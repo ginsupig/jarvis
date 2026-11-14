@@ -153,7 +153,7 @@ def last_commands() -> dict[str, dict]:
     return out
 
 
-def submit(action: str, bot: str, reason: str) -> dict:
+def submit(action: str, bot: str, reason: str, expected_command_id=None) -> dict:
     """One audited command through MegaEmpire's own code. Argument list, no shell."""
     if action not in ("pause", "resume"):
         raise ValueError("the autopilot only pauses and resumes")
@@ -168,6 +168,8 @@ def submit(action: str, bot: str, reason: str) -> dict:
     options = {"request_id": "jarvis:" + hashlib.sha256(json.dumps(identity).encode()).hexdigest()}
     if action == "resume":
         if not latest or latest["action"] != "pause" or not latest["reason"].startswith(REASON_PREFIX):
+            return {"ok": False, "reason": "pause ownership changed"}
+        if expected_command_id is not None and latest["id"] != expected_command_id:
             return {"ok": False, "reason": "pause ownership changed"}
         options["expected_command_id"] = latest["id"]
     done = subprocess.run([str(python), "-B", "-c", SUBMIT, str(root()), action, bot,
@@ -206,6 +208,7 @@ def decide(snap: dict, clock: dict, state: dict, commands: dict, lessons: list[d
             trend != "unknown" and (bot, trend) not in live_lessons
         if expired and still_mine(bot):
             acts.append({"action": "resume", "bot": bot, "rule": "undo",
+                         "expected_command_id": commands[bot]["id"],
                          "reason": f"{why.get('rule', 'pause')} pause from {why.get('day', '?')} is over"})
 
     if not clock.get("is_open"):
@@ -258,7 +261,11 @@ def tick(snap: dict | None = None, clock: dict | None = None, lessons: list[dict
         acts = decide(snap, clock, state, last_commands(), lessons, trend)
         said, log = [], state.setdefault("log", [])
         for act in acts:
-            got = submitter(act["action"], act["bot"], act["reason"])
+            if submitter is submit:
+                got = submitter(act["action"], act["bot"], act["reason"],
+                                expected_command_id=act.get("expected_command_id"))
+            else:
+                got = submitter(act["action"], act["bot"], act["reason"])
             who = "every bot" if act["bot"] == "all" else act["bot"].capitalize()
             if not got.get("ok"):
                 said.append(f"I tried to {act['action']} {who} ({act['reason']}) but MegaEmpire "

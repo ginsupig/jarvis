@@ -22,7 +22,7 @@ Companion: ginsupig/MegaEmpire `codex/autonomous-fleet-control`.
 
 Focused command: `python -m pytest -q tests/test_autopilot.py tests/test_market.py
  tests/test_fleet_control_regressions.py tests/test_header_lines.py` (one shell line).
-Result: 162 passed. The broad suite was also run against the changed branch and an
+Result: 164 passed. The broad suite was also run against the changed branch and an
 unchanged worktree at the base above, using the same Python 3.12 environment and
 clearing inherited HTTP/HTTPS/ALL_PROXY variables for both runs. Exact counts below.
 No paid model, broker order or external runtime was invoked by these tests.
@@ -46,8 +46,8 @@ companion's implementation document for the remaining allocation-replay and host
 
 | Run | Result |
 |---|---|
-| Focused changed components | 162 passed |
-| Full changed branch | 2671 passed, 13 failed, 11 errors, 45 skipped, 10 deselected |
+| Focused changed components | 164 passed |
+| Full changed branch | 2673 passed, 13 failed, 11 errors, 45 skipped, 10 deselected |
 | Full unchanged baseline | 2667 passed, 13 failed, 11 errors, 45 skipped, 10 deselected |
 
 The failure/error test IDs match exactly between full runs. Options contains a
@@ -81,3 +81,7 @@ FAILED tests/test_session_steer.py::test_two_steers_staged_in_one_turn_are_both_
 FAILED tests/test_voice_backpressure.py::test_a_client_whose_socket_fails_is_dropped
 FAILED tests/test_voice_backpressure.py::test_a_wedged_client_does_not_delay_the_frame
 ```
+
+The final concurrency correction carries the decided pause command ID through
+submission and checks it again before the transactional MegaEmpire comparison.
+Two additional regressions exercise the decision-to-submit ownership race.
