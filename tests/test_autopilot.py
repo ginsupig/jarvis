@@ -75,7 +75,7 @@ def test_tick_records_state_and_only_ever_submits_pause_or_resume(monkeypatch):
     said = autopilot.tick(snap(acct("ebt", day_pl=-3000), acct("aegis", equity=900_000)),
                           OPEN, [], "up", submitter)
     assert sent == [("pause", "ebt", "down 3.00% today")]
-    assert said == ["Paused new entries for Ebt: down 3.00% today. Exits and stops keep working."]
+    assert said == ["Requested pause of new entries for Ebt: down 3.00% today. Awaiting fleet acknowledgement; exits and stops keep working."]
     assert autopilot.load_state()["paused"]["ebt"]["rule"] == "day_loss"
     assert "ebt (down 3.00% today)" in autopilot.describe()
 

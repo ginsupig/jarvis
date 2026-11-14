@@ -34,6 +34,7 @@ Env:
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import sqlite3
 import subprocess
@@ -56,7 +57,7 @@ SUBMIT = (
     "import json,sys\n"
     "sys.path.insert(0,sys.argv[1])\n"
     "from core.fleet_learning import submit_command\n"
-    "print(json.dumps(submit_command(sys.argv[2],sys.argv[3],sys.argv[4])))\n"
+    "print(json.dumps(submit_command(sys.argv[2],sys.argv[3],sys.argv[4],**json.loads(sys.argv[5]))))\n"
 )
 
 
@@ -152,7 +153,7 @@ def last_commands() -> dict[str, dict]:
     return out
 
 
-def submit(action: str, bot: str, reason: str) -> dict:
+def submit(action: str, bot: str, reason: str, expected_command_id=None) -> dict:
     """One audited command through MegaEmpire's own code. Argument list, no shell."""
     if action not in ("pause", "resume"):
         raise ValueError("the autopilot only pauses and resumes")
@@ -161,8 +162,18 @@ def submit(action: str, bot: str, reason: str) -> dict:
     python = Path(os.getenv("JARVIS_FLEET_WATCH_PYTHON", fleet.DEFAULT_WATCH_PYTHON))
     if not python.exists() or not (root() / "core" / "fleet_learning.py").exists():
         return {"ok": False, "reason": "MegaEmpire not found"}
+    latest = last_commands().get(bot)
+    identity = [market.to_et(datetime.now(timezone.utc)).date().isoformat(), action, bot,
+                reason, latest.get("id") if latest else None]
+    options = {"request_id": "jarvis:" + hashlib.sha256(json.dumps(identity).encode()).hexdigest()}
+    if action == "resume":
+        if not latest or latest["action"] != "pause" or not latest["reason"].startswith(REASON_PREFIX):
+            return {"ok": False, "reason": "pause ownership changed"}
+        if expected_command_id is not None and latest["id"] != expected_command_id:
+            return {"ok": False, "reason": "pause ownership changed"}
+        options["expected_command_id"] = latest["id"]
     done = subprocess.run([str(python), "-B", "-c", SUBMIT, str(root()), action, bot,
-                           REASON_PREFIX + reason],
+                           REASON_PREFIX + reason, json.dumps(options)],
                           capture_output=True, text=True, timeout=60,
                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if done.returncode != 0:
@@ -185,16 +196,19 @@ def decide(snap: dict, clock: dict, state: dict, commands: dict, lessons: list[d
 
     def still_mine(bot: str) -> bool:
         last = commands.get(bot)
-        return bool(last) and last["action"] == "pause" and last["reason"].startswith(REASON_PREFIX)
+        return (bool(last) and last["action"] == "pause" and last["reason"].startswith(REASON_PREFIX)
+                and (not mine.get(bot, {}).get("command_id") or
+                     last["id"] == mine[bot]["command_id"]))
 
     # Undo yesterday's pauses, and lesson pauses whose market has passed.
     live_lessons = {(l["bot"], l["trend"]) for l in lessons
                     if l["status"] == "confirmed" and l["sign"] < 0}
     for bot, why in mine.items():
         expired = why.get("day") != day if why.get("rule") != "lesson" else \
-            (bot, trend) not in live_lessons
+            trend != "unknown" and (bot, trend) not in live_lessons
         if expired and still_mine(bot):
             acts.append({"action": "resume", "bot": bot, "rule": "undo",
+                         "expected_command_id": commands[bot]["id"],
                          "reason": f"{why.get('rule', 'pause')} pause from {why.get('day', '?')} is over"})
 
     if not clock.get("is_open"):
@@ -239,13 +253,19 @@ def tick(snap: dict | None = None, clock: dict | None = None, lessons: list[dict
             import fleet_study
             lessons = fleet_study.lessons()
         if trend is None:
-            trend = str(((market.get_state("snapshot") or {}).get("regime") or {}).get("trend") or "unknown")
+            observed = fleet.overwatch()
+            trend = (str(observed.get("regime", {}).get("regime") or "unknown")
+                     if 0 <= observed.get("age_s", float("inf")) <= 180 else "unknown")
         snap = snap if snap is not None else (accounts.snapshot() if clock.get("is_open") else {})
         state = load_state()
         acts = decide(snap, clock, state, last_commands(), lessons, trend)
         said, log = [], state.setdefault("log", [])
         for act in acts:
-            got = submitter(act["action"], act["bot"], act["reason"])
+            if submitter is submit:
+                got = submitter(act["action"], act["bot"], act["reason"],
+                                expected_command_id=act.get("expected_command_id"))
+            else:
+                got = submitter(act["action"], act["bot"], act["reason"])
             who = "every bot" if act["bot"] == "all" else act["bot"].capitalize()
             if not got.get("ok"):
                 said.append(f"I tried to {act['action']} {who} ({act['reason']}) but MegaEmpire "
@@ -253,11 +273,12 @@ def tick(snap: dict | None = None, clock: dict | None = None, lessons: list[dict
                 continue
             if act["action"] == "pause":
                 state.setdefault("paused", {})[act["bot"]] = {
-                    "day": clock["day"], "rule": act["rule"], "reason": act["reason"]}
-                said.append(f"Paused new entries for {who}: {act['reason']}. Exits and stops keep working.")
+                    "day": clock["day"], "rule": act["rule"], "reason": act["reason"],
+                    "command_id": got.get("command_id"), "status": "pending"}
+                said.append(f"Requested pause of new entries for {who}: {act['reason']}. Awaiting fleet acknowledgement; exits and stops keep working.")
             else:
                 state.setdefault("paused", {}).pop(act["bot"], None)
-                said.append(f"Resumed {who}: {act['reason']}.")
+                said.append(f"Requested resume for {who}: {act['reason']}. Awaiting fleet acknowledgement.")
             log.append({"t": time.time(), "day": clock["day"], **act})
         # A pause someone else has since overridden is no longer ours to undo.
         commands = last_commands()
@@ -265,6 +286,11 @@ def tick(snap: dict | None = None, clock: dict | None = None, lessons: list[dict
             last = commands.get(bot)
             if last and not (last["action"] == "pause" and last["reason"].startswith(REASON_PREFIX)):
                 state["paused"].pop(bot)
+        observed = fleet.overwatch()
+        if 0 <= observed.get("age_s", float("inf")) <= 180:
+            for record in state.get("paused", {}).values():
+                record["status"] = observed.get("command_statuses", {}).get(
+                    str(record.get("command_id")), "pending")
         state["log"] = log[-200:]
         state["last_tick"] = time.time()
         state["market_open"] = bool(clock.get("is_open"))

@@ -635,3 +635,16 @@ Inspired by the AI that started it all — Tony Stark's JARVIS.
 > with, endorsed by, or connected to Marvel Entertainment, The Walt Disney
 > Company, or any related entities. The JARVIS name and character are property
 > of Marvel Entertainment.
+
+
+## MegaEmpire control and learning provenance
+
+The fleet controller now uses immutable entry regimes, preserves pause ownership by
+command ID, and distinguishes a requested command from allocation publication and
+runtime observation. Unknown market regimes cannot release a lesson-based pause.
+Jarvis's market export explicitly identifies delayed research data; the fresh
+MegaEmpire allocation supplies the regime used for control decisions.
+
+See [fleet control validation](docs/fleet-control-validation.md) for changes, tests,
+integration prerequisites and remaining limits. The companion MegaEmpire branch
+is `codex/autonomous-fleet-control`; deploy the pair together on the paper host.

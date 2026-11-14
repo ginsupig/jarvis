@@ -325,7 +325,8 @@ def test_fleet_trades_are_learned_by_bot_strategy_and_regime(data_dir, tmp_path,
     aegis = next(b for b in r["bots"] if b["bot"] == "aegis")
     assert (aegis["trades"], aegis["days"], aegis["verdict"]) == (40, 10, "winning")
     assert r["strategies"][0]["strategy"] == "orb_breakout_long"
-    assert any(g["trend"] == "uptrend" and g["trades"] == 4 for g in r["regimes"])
+    # Empty entry contexts must not be replaced with end-of-day knowledge.
+    assert all(g["trend"] == "unknown" for g in r["regimes"])
     assert r["untagged"] == 1
     said = fleet.describe()
     assert "aegis: 40 trades over 10 days" in said and "winning" in said
