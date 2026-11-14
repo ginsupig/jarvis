@@ -80,6 +80,10 @@ def export_view() -> bool:
     if not regime or not snap.get("as_of"):
         return False
     view = {"updated_epoch": market.parse_utc(snap["as_of"]).timestamp(),
+            "schema_version": 2,
+            "data_through": snap.get("data_through"),
+            "feed_role": "delayed_research",
+            "execution_fresh": False,
             "day": (snap.get("session") or {}).get("day"),
             **{k: regime.get(k) for k in ("trend", "vol_state", "breadth_50d", "breadth_200d",
                                            "spy_vs_50d", "spy_vs_200d", "vol_percentile")}}
@@ -110,6 +114,7 @@ def overwatch() -> dict:
                                         .get("score_bps") or 0)})
     bots.sort(key=lambda b: -b["budget"])
     return {"age_s": age, "tags": tags, "bots": bots,
+            "regime": data.get("regime") or {}, "command_statuses": data.get("command_statuses") or {},
             "fleet_budget": float((data.get("overwatch") or {}).get("fleet_budget_dollars") or 0)}
 
 
@@ -172,8 +177,10 @@ def sync() -> dict:
         return {"ok": False, "reason": f"no fleet database at {path}"}
     with closing(sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True, timeout=5)) as src:
         src.row_factory = sqlite3.Row
+        columns = {r[1] for r in src.execute("PRAGMA table_info(outcomes)")}
+        context_columns = ", regime, environment" if {"regime", "environment"} <= columns else ""
         rows = src.execute("SELECT bot, id, strategy, attribution, symbol, direction, "
-                           "opened, closed, net, return_bps FROM outcomes").fetchall()
+                           "opened, closed, net, return_bps" + context_columns + " FROM outcomes").fetchall()
     with closing(market._connect()) as conn, conn:
         regimes = {r["day"]: (r["trend"], r["vol_state"])
                    for r in conn.execute("SELECT * FROM fleet_regime_days")}
@@ -184,12 +191,25 @@ def sync() -> dict:
                 continue
             day = _et_day(r["opened"])
             strategy = "" if r["attribution"] in UNTAGGED else clean(r["strategy"])
-            trend, vol = regimes.get(day, ("unknown", "unknown"))
+            # Completed-session labels include information unavailable at entry.
+            # Prefer the broker episode's immutable entry context. For older
+            # schemas, use only a strictly earlier completed session.
+            prior_days = [d for d in regimes if 0 < (datetime.fromisoformat(day)-datetime.fromisoformat(d)).days <= 4]
+            trend, vol = regimes[max(prior_days)] if prior_days else ("unknown", "unknown")
+            if context_columns:
+                trend = r["regime"] or "unknown"
+                vol = r["environment"] or "unknown"
             conn.execute(
                 "INSERT INTO fleet_trades VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (bot, str(r["id"]), strategy, market.normalise_symbol(r["symbol"] or ""),
                  "short" if r["direction"] == "short" else "long", day, float(r["closed"]),
                  float(r["net"]), float(r["return_bps"]), trend, vol))
+    if market.get_state("fleet_label_version") != 2:
+        with closing(market._connect()) as conn, conn:
+            exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='fleet_lessons'").fetchone()
+            if exists:
+                conn.execute("UPDATE fleet_lessons SET status='retired' WHERE status!='retired'")
+        market.set_state("fleet_label_version", 2)
     market.set_state("fleet_synced", time.time())
     return {"ok": True, "trades": len(rows)}
 

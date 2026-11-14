@@ -736,6 +736,12 @@ EXEMPT = {
         "it reads MegaEmpire's command rows; a command's `reason` (which a user "
         "may have typed) is only tested with startswith(REASON_PREFIX) to tell "
         "JARVIS's own pauses from anyone else's, and is never printed"),
+    "autopilot.submit": (
+        "command action and reason are used for identity hashing and ownership comparison, "
+        "never interpolated into a session header; subprocess output is parsed as JSON"),
+    "autopilot.tick": (
+        "the status field is a fleet acknowledgement stored in local state, not a foreign "
+        "session field; spoken action reasons come from decide's numeric rules"),
     "autopilot.decide": (
         "its reasons are sentences it builds from numbers; it reads a command's "
         "`action` and `reason` only to compare them, never to print them"),
